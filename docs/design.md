@@ -1,6 +1,6 @@
 # 后端与关键逻辑设计初稿
 
-依据：[需求](requirements.md)、[数据库设计](database.md)。状态：M1—M3 已验收；已实现应用基础、账号/会话、CSRF、个人列表及问卷管理/定义校验。填写/答案执行、提交与统计保留为后续设计基线，已交付索引及下一步安排见 [M4计划](../workflow/plan.md#m4)，真实证据见 [测试记录](test-cases.md#11-m3-实际执行记录)。
+依据：[需求](requirements.md)、[数据库设计](database.md)。状态：M1—M4 已验收；已实现应用基础、账号/会话、CSRF、个人列表及问卷管理/定义校验。M4答案/路径、填写与提交已实现并获用户验收，统计保留为M5设计基线，已交付见[M4索引](../workflow/plan.md#m4)，下一步见[M5计划](../workflow/plan.md#m5)，真实证据见 [测试记录](test-cases.md#13-m4-实际执行记录)。
 
 ## 1. 本次确认的行为
 
@@ -99,7 +99,7 @@ flowchart LR
 | --- | --- |
 | 单选 | 字符串 ID 属于本题选项 |
 | 多选 | ID 字符串数组、成员合法、不重复；数量满足 minSelections/maxSelections |
-| 文本 | 字符串；非空原文保留，按 `Array.from(value).length` 校验上下限；trim 仅用于判断是否纯空白 |
+| 文本 | 字符串；非空原文保留，拒绝未配对UTF-16代理项，按 `Array.from(value).length` 校验上下限；trim 仅用于判断是否纯空白 |
 | 数字 | JSON number、有限；需要整数时是安全整数；执行包含端点的 min/max 校验 |
 
 空答仅检查 required，非必答空答不执行内容限制。数字 0 有效，不能用真假值判断是否作答。浏览器将数字输入完整校验后转为 number，空输入转 null；不能使用只解析前缀的方式把“12abc”当成 12。多选条件比较使用集合，但答案中出现重复项应报错，不能静默去重。
@@ -163,6 +163,8 @@ requestId 是一次主动提交的 UUID，网络重试保持不变。内容摘�
 
 唯一索引冲突或并发检查失败后，在事务外重新查同作用域 requestId。若已有同内容成功记录则返回原结果；否则才报告次数限制或真实冲突。状态/版本拒绝前也需处理并发同请求已成功的情况，避免给已成功重试返回误导性失败。
 
+幂等记录暂时不存在只代表本次读取尚未观察到成功，不能证明同key的在途事务必然失败。客户端已有结果未知状态时，即使随后重试返回关闭/截止等4xx，也必须保持原requestId/负载及锁定，继续确认，不宣称原提交失败；未发生未知结果的明确失败才允许返回修改。
+
 登录过期返回 401；账号变化、版本变化、内容冻结、次数限制和幂等冲突返回明确的 409 code；答案/路径错误返回 422。服务器响应不带数据库堆栈或内部身份约束字段。
 
 ## 8. 统计与明细
@@ -175,13 +177,19 @@ requestId 是一次主动提交的 UUID，网络重试保持不变。内容摘�
 - 使用 submittedAt + _id 作为稳定分页排序；游标只控制分页位置，不改变 ownerId/surveyId 的权限范围。
 - 逐题文本/数值明细和完整答卷均通过白名单返回；匿名不关联输出用户名，实名才关联所需用户名。
 
-上述零数据展示为技术默认约定，尚未执行统计测试。
+上述零数据展示为技术默认约定，尚未执行统计测试。M5仅编制实施计划，尚未运行或部署统计代码；本轮等待用户提交后再开始，具体任务见[M5计划](../workflow/plan.md#m5)。
+
+M5的技术实施基线：作者可读取自己草稿/已发布/关闭/到期问卷的统计，读操作不触发冻结或修改答卷。整卷计数和题目指标尽量基于同一聚合输入，避免多选展开后把选项数当作答卷数；单题复用相同口径，不把全部答卷拉到应用内存计算，也不在提交事务中添加统计缓存写入。
+
+答卷摘要仅输出答卷标识、提交时间、匿名标记及允许的respondent；逐题条目增加当前题最终value，完整答卷输出有效路径与最终答案。匿名respondent=null，实名仅包含username；统计/明细响应及游标均不携带账号ID、respondentId、requestId、requestHash、singleOnly、凭据或会话内容。正文和完整元信息通过已授权问卷定义提供，旧答卷显示当前标题/说明，不建立历史快照。
+
+分页只读已成功答卷，以submittedAt/_id降序、limit+1及稳定边界取得下一页；静态数据集同时间分页须无遗漏/重复。游标只承载位置及必要资源作用域，不授权访问；每次查询都再次验证作者和问卷/题目/答卷归属。具体编码、DTO与错误字段在M5-01固定。各次读取不承诺同一快照，页面刷新读取最新统计；切换题目/资源重置分页并避免旧响应覆盖新视图。
 
 ## 9. HTTP 与配置
 
 接口初稿见 [api.md](api.md)。错误统一包含 code、message 和可选 details；字段/题目定位用于页面展示，业务服务不直接操作 res。状态改变接口采用明确动作，所有管理写入携带 revision。
 
-配置至少包括 MONGODB_URI、MONGODB_DB、SESSION_SECRET、PORT；24 小时固定期限和时钟便于测试，但不通过普通客户端请求覆盖。启动检查必填配置、数据库连接及事务拓扑，初始化索引/validator 使用独立脚本；当前不实施这些操作。
+配置至少包括 MONGODB_URI、MONGODB_DB、SESSION_SECRET、PORT；24 小时固定期限和时钟便于测试，但不通过普通客户端请求覆盖。启动检查必填配置、数据库连接及事务拓扑，初始化索引/validator使用独立脚本，应用启动也执行兼容检查与缺失结构补建。
 
 ## 10. M1 测试覆盖映射
 
@@ -202,4 +210,12 @@ requestId 是一次主动提交的 UUID，网络重试保持不变。内容摘�
 | R8/D7 | 单选 A/B/A、多选 [X,Y]/[Y]/空、数字 10/20/空、零答卷 | A=2/B=1；X=1/Y=2、有效数=2；均值15；零数据约定一致 |
 | R9 | 从需求编号定位设计、接口及后续测试步骤 | 每项可追溯，不将未运行用例标为通过 |
 
-M1—M3 已由用户验收，问卷管理已有实现和真实测试证据；M4仅编制计划，填写提交与统计留待 M4—M5，测试随模块实现。具体文件与结果以计划和测试记录为准。
+M1—M4 已由用户验收，问卷管理已有实现和真实测试证据；第2轮已提交b1703ff；第3轮M4已实现填写提交并通过用户验收，当前收尾待提交，统计留待M5。具体文件与结果以计划和测试记录为准。
+
+## 11. M4实现合同（第3轮）
+
+共享纯函数均接收当前完整定义，不修改输入：`normalizeAnswer(question,value)` 与 `validateAnswer(question,value)` 返回 `{valid,value,errors}`；错误为 `{questionId,field,code,message}`，field用`answers.<题ID>`。规范化只处理合法类型的空值，validate再校验成员/限制/必答。`evaluateCondition(question,value,condition)` 返回boolean；`getNextQuestion(questions,questionId,value)` 返回题ID或`END`（仅求一步）。`resolveFinalPath(questions,answers,{rejectOutside=true}={})` 返回 `{valid,answers,effectivePath,errors,code}`，成功code为空；入参answers为`[{questionId,value}]`，未知/重复题及非法值为ANSWER_INVALID，固定循环为PATH_NOT_COMPLETE，路径外答案为ANSWER_OUTSIDE_PATH。客户端用rejectOutside=false从缓存筛选，仅校验最终经过的答案（被跳过的非法数字草稿也不阻碍新路径），服务端默认严格。缺失可选值补null；未知/重复条目始终拒绝。
+
+提交摘要仅依赖请求：严格白名单和基本类型检查后，取definitionRevision、anonymous及按questionId排序的answers；多选字符串数组排序但不去重；缺省value/null、空字符串/纯空白、空数组统一null，非空文本原文保留，数值-0同0。缺省的整条答案与显式null条目视为不同请求（不查问卷补全哈希）；expectedUserId先与真实会话比较，不参与摘要。错误类型、重复题/重复选项不规范成合法输入。requestId接受标准UUID格式；expectedUserId为24位十六进制ObjectId。提交成功响应统一 `{submissionId,submittedAt,replayed}`，新保存201，已保存同负载200。
+
+测试装配通过createApp的可选submissionHooks传入，不创建HTTP测试端点。`afterAccepted({survey,session,attempt})`在事务问卷首读/受理检查之后调用；`afterFreeze(...)`在首份冻结写入之后调用；`beforeInsert(...)`在插入之前调用；`afterCommit(...)`在实际成功提交后、HTTP响应前调用，可模拟丢失响应。钩子默认空且不由请求配置；真实事务仍走MongoDB，测试闸门负责超时及finally释放。

@@ -436,7 +436,7 @@ async function perform(action) {
       }
       applySurvey(await request(`/surveys/${encodeURIComponent(survey.id)}/${action}`, { method: 'POST', body: { revision: survey.revision } }));
     }
-    message.textContent = action ? ({ publish: '发布成功。填写策略已冻结，填写功能尚未开放。', close: '问卷已关闭。', reopen: '问卷已重开。填写功能尚未开放。' })[action] : '保存成功。';
+    message.textContent = action ? ({ publish: '发布成功。填写策略已冻结，可分享链接供填写。', close: '问卷已关闭。', reopen: '问卷已重开，可通过分享链接填写。' })[action] : '保存成功。';
   } catch (error) {
     message.textContent = '操作未完成，请查看提示后重试。';
     showError(error);
@@ -472,7 +472,7 @@ $('#reload-button').addEventListener('click', () => { void reload(); });
 $('#copy-share').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText($('#share-url').value);
-    $('#copy-status').textContent = '链接已复制。填写功能尚未开放。';
+    $('#copy-status').textContent = '链接已复制。问卷开放期间可登录填写。';
   } catch {
     $('#share-url').focus(); $('#share-url').select();
     $('#copy-status').textContent = '无法自动复制，请复制已选中的链接。';
@@ -484,5 +484,6 @@ window.addEventListener('beforeunload', event => {
   event.returnValue = '';
 });
 window.addEventListener('focus', displayStatus);
+$('#share-section .hint').textContent = '分享此链接供填写者登录填写；草稿、已关闭或已到截止时间的问卷不开放填写。';
 if (idFromUrl) void reload();
 else updateControls();

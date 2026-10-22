@@ -8,13 +8,15 @@ import { createAuthService, publicUser } from './services/auth-service.js';
 import { listSurveys } from './services/survey-list-service.js';
 import { createUserRepository } from './repositories/users.js';
 import { createSurveyService } from './services/survey-service.js';
+import { createFillService } from './services/fill-service.js';
+import { createSubmissionService } from './services/submission-service.js';
 
 export const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const cookieName = 'questionnaire.sid';
 const token = () => randomBytes(32).toString('hex');
 const sessionAction = (req, action) => new Promise((resolve, reject) => req.session[action](error => error ? reject(error) : resolve()));
 
-export function createApp({ db, client, config, clock = { now: () => Date.now() }, logger = console }) {
+export function createApp({ db, client, config, clock = { now: () => Date.now() }, logger = console, submissionHooks = {} }) {
   if (!db || !client || !config?.sessionSecret) throw new Error('createApp 缺少数据库或会话配置');
   const app = express();
   app.disable('x-powered-by');
@@ -33,6 +35,7 @@ export function createApp({ db, client, config, clock = { now: () => Date.now() 
   });
   app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url))));
   app.use('/shared', express.static(fileURLToPath(new URL('./shared/', import.meta.url))));
+  app.get('/survey/:slug', (req, res) => res.sendFile(fileURLToPath(new URL('../public/fill.html', import.meta.url))));
   app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const parseJson = express.json({ limit: '1mb' });
   app.use('/api', (req, res, next) => parseJson(req, res, error => {
@@ -115,6 +118,13 @@ export function createApp({ db, client, config, clock = { now: () => Date.now() 
   app.get('/api/surveys/:id', requireAuth, async (req, res) => res.json({ data: await surveys.get(req.user.id, req.params.id) }));
   app.patch('/api/surveys/:id', requireAuth, requireCsrf, async (req, res) => res.json({ data: await surveys.patch(req.user.id, req.params.id, req.body) }));
   for (const action of ['publish', 'close', 'reopen']) app.post(`/api/surveys/:id/${action}`, requireAuth, requireCsrf, async (req, res) => res.json({ data: await surveys.transition(req.user.id, req.params.id, action, req.body) }));
+  const fill = createFillService({ db, clock });
+  const submissions = createSubmissionService({ db, client, clock, hooks: submissionHooks });
+  app.get('/api/fill/:slug', requireAuth, async (req, res) => res.json({ data: await fill.get(req.params.slug) }));
+  app.post('/api/fill/:slug/submissions', requireAuth, requireCsrf, async (req, res) => {
+    const data = await submissions.submit(req.user.id, req.params.slug, req.body);
+    res.status(data.replayed ? 200 : 201).json({ data });
+  });
   app.use((req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: '资源或接口不存在', details: [] } }));
   app.use(errorHandler);
   return app;

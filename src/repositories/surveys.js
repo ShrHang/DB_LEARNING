@@ -24,6 +24,9 @@ export function createSurveyRepository(db) {
   return {
     insert: document => surveys.insertOne({ ...document, questions: storageQuestions(document.questions) }),
     findOwn: (_id, ownerId) => surveys.findOne({ _id, ownerId }),
+    findSlug: slug => surveys.findOne({ slug }),
+    findId: (_id, session) => surveys.findOne({ _id }, { session }),
+    freeze: (survey, acceptedAt, session) => surveys.updateOne({ _id: survey._id, definitionRevision: survey.definitionRevision, contentLocked: false }, { $set: { contentLocked: true, firstSubmittedAt: acceptedAt, updatedAt: acceptedAt }, $inc: { revision: 1 } }, { session }),
     updateOwn: (filter, changes) => surveys.findOneAndUpdate(filter, { $set: { ...changes, ...(Object.hasOwn(changes, 'questions') ? { questions: storageQuestions(changes.questions) } : {}) }, $inc: { revision: 1 } }, { returnDocument: 'after', includeResultMetadata: false })
   };
 }

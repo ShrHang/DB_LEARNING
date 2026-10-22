@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>填写问卷 · 问卷系统</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/fill.css">
+  <script type="module" src="/js/fill.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header"><a class="brand" href="/">问卷系统</a><span id="fill-account" class="muted"></span></header>
+  <main id="main" class="workspace fill-workspace">
+    <section class="fill-heading" aria-labelledby="fill-title">
+      <p class="eyebrow">填写问卷</p>
+      <h1 id="fill-title">正在读取问卷…</h1>
+      <p id="fill-description" hidden></p>
+      <p id="fill-policy" class="hint" hidden></p>
+      <p id="fill-deadline" class="hint" hidden></p>
+      <p class="hint">进度仅保留在当前页面。刷新或关闭会丢失填写内容，请保持本页打开。</p>
+    </section>
+    <p id="fill-status" class="hint" role="status" aria-live="polite">正在检查登录状态…</p>
+    <div id="fill-error" class="notice error" role="alert" tabindex="-1" hidden></div>
+    <section id="fill-auth" class="panel fill-section" aria-labelledby="fill-auth-title" hidden>
+      <h2 id="fill-auth-title">登录后填写</h2>
+      <p id="fill-auth-note">请在本页登录后继续填写。</p>
+      <form id="fill-login-form">
+        <fieldset id="fill-login-fields" class="editor-fields">
+          <div class="field"><label for="fill-username">用户名</label><input id="fill-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+          <div class="field"><label for="fill-password">密码</label><input id="fill-password" name="password" type="password" autocomplete="current-password" required></div>
+          <p id="fill-login-error" class="notice error" role="alert" tabindex="-1" hidden></p>
+          <div class="toolbar"><button type="submit">登录并恢复</button><button id="fill-check-session" type="button" class="secondary">检查当前登录</button></div>
+        </fieldset>
+      </form>
+      <p class="form-footer">还没有账号？<a href="/register.html" target="_blank" rel="noopener">在新标签页注册</a>，然后回到本页登录。</p>
+    </section>
+    <section id="fill-question" class="panel fill-section" hidden>
+      <form id="fill-answer-form" novalidate>
+        <fieldset id="fill-question-fields" class="editor-fields">
+          <legend id="fill-question-title" tabindex="-1"></legend>
+          <p id="fill-question-help" class="hint"></p>
+          <div id="fill-answer" class="field"></div>
+          <p id="fill-answer-error" class="field-error" role="alert" hidden></p>
+          <div class="toolbar fill-navigation"><button id="fill-previous" type="button" class="secondary">上一题</button><button id="fill-next" type="submit">下一题</button></div>
+        </fieldset>
+      </form>
+    </section>
+    <section id="fill-review" class="panel fill-section" aria-labelledby="fill-review-title" hidden>
+      <h2 id="fill-review-title" tabindex="-1">确认答卷</h2>
+      <p>请核对下列最终答案，确认后再提交。</p>
+      <p id="fill-review-note" class="hint"></p>
+      <ol id="fill-review-list" class="fill-review-list"></ol>
+      <fieldset id="fill-anonymous-fields" class="editor-fields field">
+        <p id="fill-anonymous-note"></p>
+        <div id="fill-anonymous-choice" hidden><label for="fill-anonymous">提交方式</label><select id="fill-anonymous"><option value="">请选择匿名或实名</option><option value="true">匿名提交</option><option value="false">实名提交</option></select></div>
+      </fieldset>
+      <div id="fill-pending" class="notice" role="status" hidden><p id="fill-pending-note"></p><button id="fill-retry-submission" type="button">重试确认提交结果</button></div>
+      <div class="toolbar fill-navigation"><button id="fill-back" type="button" class="secondary">返回修改</button><button id="fill-submit" type="button">确认提交</button></div>
+    </section>
+    <section id="fill-success" class="panel fill-section notice success" aria-labelledby="fill-success-title" tabindex="-1" hidden>
+      <h2 id="fill-success-title">提交成功</h2><p id="fill-success-note"></p><p>可以关闭本页。</p>
+    </section>
+    <div class="toolbar fill-navigation"><button id="fill-load-retry" type="button" class="secondary" hidden>重试读取问卷</button><button id="fill-reload" type="button" class="secondary" hidden>重新载入填写</button></div>
+    <noscript><p class="notice error">请启用 JavaScript 后填写问卷。</p></noscript>
+  </main>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # API 初稿
 
-状态：账号及本文件第3节全部问卷管理接口已实现并完成M2/M3验收；第4—5节填写提交与统计仍为 M4—M5 合同，尚未实现。M4计划见 [plan.md](../workflow/plan.md#m4)，本轮尚未实施。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
+状态：账号及本文件第3节全部问卷管理接口已实现并完成M2/M3验收；第4节填写提交已实现并通过用户验收；第5节统计仍为M5合同。M4交付见 [plan.md](../workflow/plan.md#m4)，M5计划见[下一阶段安排](../workflow/plan.md#m5)，等待第3轮提交后实施。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
 
 ## 1. 公共约定
 
@@ -71,6 +71,22 @@ expectedUserId 只用于防止恢复登录后意外换账号，服务端实际�
 
 成功 data 包含 submissionId、submittedAt、replayed；不返回 respondentId、requestHash 或内部约束字段。同 requestId 不同规范化内容为 409。登录过期保持页面并重新登录原账号，重试保留原标识和负载；服务端最终状态和时间决定新增提交能否接受。
 
+
+### 4.1 M4字段与重试细则
+
+GET填写data字段为 `{id,slug,title,description,settings,questions,deadlineAt,definitionRevision}`；不返回ownerId、revision、冻结标记、内部用户身份或已有答卷。关闭/到期409，草稿/不存在404；GET与POST均先校验登录，POST还要求CSRF。
+
+POST顶层五个字段均须提供；requestId为UUID（大小写统一小写），expectedUserId为24位十六进制字符串，definitionRevision为正安全整数，anonymous为boolean，answers为数组。答案条目仅允许questionId/value，value缺省视为null。基本格式/类型错误、重复题目/重复多选成员400；未知题目、题型或范围不符422 ANSWER_INVALID；固定答案循环422 PATH_NOT_COMPLETE，路径外附加题422 ANSWER_OUTSIDE_PATH。数字字符串不转换为数值；含未配对UTF-16代理项的文本422，避免BSON编码时静默替换。服务端从会话取身份，拒绝path、respondentId、singleOnly等客户端字段。
+
+摘要包含definitionRevision/anonymous/answers，条目按题目ID、数组按选项ID排序；空字符串/纯空白/空数组/null/缺省value统一为空，非空文本原文保留，-0与0相同。缺省整条答案和显式null条目视为不同请求。相同摘要也不能掩盖非法题型：重放前仍验证原值与已冻结题型相符。首次新增答卷201；成功重试200，示例：
+
+```json
+{"data":{"submissionId":"000000000000000000000002","submittedAt":"2026-10-22T08:00:00.000Z","replayed":false}}
+```
+
+唯一冲突及并发业务拒绝后先在事务外查同请求成功结果，再区分幂等冲突和次数限制。未知数据库/事务异常及提交确认失败为503 TEMPORARY_UNAVAILABLE，不能据此判断是否已保存；客户端冻结原请求和负载，点击“重试确认提交结果”。已有结果未知状态后，后续重试即使返回关闭/截止等4xx，也不能据此断言原在途事务失败；仍保留原请求并锁定继续确认。401/ACCOUNT_CHANGED仍保持原请求并同页恢复原账号，不能将旧答卷接管给新账号。首份冻结和插入采用同一事务，实际提交确认后才返回201。
+
+
 ## 5. 统计和明细
 
 | 方法/路径 | 权限及输入 | 结果 |
@@ -84,6 +100,16 @@ expectedUserId 只用于防止恢复登录后意外换账号，服务端实际�
 选择题统计包含 answeredCount、各选项 count、percentage；percentage 取 0—100 的百分数，分母 0 为 null，多选总和可超过100。数值题包含 answeredCount 和 average，无有效数值时 average=null。精度保留展示由页面处理，服务端不提前对均值和百分比截断。
 
 匿名答卷响应使用 anonymous=true、respondent=null；实名使用允许展示的用户名对象。答卷 ID 是答卷标识，不包含账号关联字段。标题/说明从当前问卷读取。
+
+### 5.1 M5实施合同基线（尚未部署）
+
+本节5个GET均需登录及作者权限；草稿/关闭/到期不阻止作者读取。统计包括该问卷所有成功答卷，不按当前登录作者作为respondent过滤；不存在/越权问卷、非本卷题目、非本卷答卷统一404。
+
+统计输出以问卷与题目/选项元信息、totalSubmissions、answeredCount、count/percentage及数字average为白名单；零次选项仍列出，空分母percentage=null，空数值average=null。整卷与单题使用同一统计口径；具体嵌套DTO在M5-01固定后再派工，不能视为现有API返回。
+
+答卷摘要候选字段为 `{submissionId,submittedAt,anonymous,respondent}`，逐题条目增加value；完整答卷包括最终answers与effectivePath，元信息显示当前问卷版本。匿名respondent=null，实名仅为 `{username}`；这些响应及分页游标均排除账号ID、respondentId、requestId、requestHash、singleOnly、会话及密码字段。页面不能通过接收原文档再隐藏字段来代替服务端过滤。
+
+两个分页接口只接受cursor/limit，默认20、范围1—100，返回items/nextCursor；按submittedAt/_id降序读取，逐题列表仅包含该题非空有效回答。未知query/无效limit或cursor为400；游标的具体编码与资源作用域在M5-01固定，不能改变作者授权条件。只读接口不修改问卷/答卷或延长会话，各次分页/统计读取不承诺锁定同一快照。
 
 ## 6. 错误与处理
 
@@ -105,4 +131,4 @@ expectedUserId 只用于防止恢复登录后意外换账号，服务端实际�
 | 422 PATH_NOT_COMPLETE / ANSWER_OUTSIDE_PATH | 最终答案未形成结束路径，或含路径外答案；不保存答卷 |
 | 503 TEMPORARY_UNAVAILABLE | 数据库/事务暂时失败，保留相同请求标识和负载重试 |
 
-事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。填写提交的驱动异常分类、响应示例与完整字段 schema 在M4实现时补充；账号/管理已按前文实现，第4—5节仍不能当作已部署API。
+事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。填写提交已实现如下合同；第5节统计尚未部署。通用认证或数据库读取异常也可能返回503 SERVICE_UNAVAILABLE，同样保留原提交标识重试。

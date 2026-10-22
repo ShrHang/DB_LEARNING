@@ -1,0 +1,24 @@
+.fill-workspace { max-width: 780px; }
+.fill-heading, .fill-section { margin-bottom: 1.25rem; min-width: 0; }
+.fill-heading h1, #fill-description, #fill-question-title, .fill-review-list { overflow-wrap: anywhere; white-space: pre-wrap; }
+#fill-description { margin: .75rem 0; }
+#fill-account { overflow-wrap: anywhere; }
+#fill-question-title { width: 100%; font-weight: 700; font-size: 1.2rem; line-height: 1.6; padding: 0; }
+.fill-choice { display: flex; align-items: flex-start; gap: .7rem; padding: .7rem; border: 1px solid #dce2e9; border-radius: .4rem; font-weight: 400; cursor: pointer; }
+.fill-choice:has(input:checked) { background: #eaf1fa; border-color: #1859a4; }
+.fill-choice input { flex: 0 0 20px; width: 20px; height: 20px; min-height: 20px; margin: .2rem 0 0; padding: 0; accent-color: #1859a4; }
+.fill-choice span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.fill-navigation { margin-top: 1.25rem; }
+.fill-review-list { padding-left: 1.5rem; margin: 1.25rem 0; }
+.fill-review-list li { padding: .75rem 0; border-bottom: 1px solid #dce2e9; }
+.fill-review-list h3 { font-size: 1rem; margin: 0 0 .4rem; }
+.fill-review-list p { margin: 0 0 .4rem; }
+.fill-review-list button { padding: .35rem .75rem; font-size: .9rem; }
+#fill-error p:last-child, #fill-pending p:last-child, #fill-success p:last-child { margin-bottom: 0; }
+#fill-error ul { padding-left: 1.25rem; }
+#fill-answer[aria-invalid="true"] { border-left: 3px solid #a32323; padding-left: .75rem; }
+@media (max-width: 540px) {
+  .fill-section { padding: 1.1rem; }
+  .fill-navigation > button { flex: 1 1 7rem; }
+  #fill-pending button { width: 100%; }
+}
