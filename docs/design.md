@@ -1,6 +1,6 @@
 # 后端与关键逻辑设计初稿
 
-依据：[需求](requirements.md)、[数据库设计](database.md)。状态：C1—C6 已确认；以下为 M1 设计交付基线，当前轮次收尾待用户 Git 归档。尚未编写或测试业务代码，实施安排见 [M2 计划](../workflow/plan.md#m2)。
+依据：[需求](requirements.md)、[数据库设计](database.md)。状态：M1—M3 已验收；已实现应用基础、账号/会话、CSRF、个人列表及问卷管理/定义校验。填写/答案执行、提交与统计保留为后续设计基线，已交付索引及下一步安排见 [M4计划](../workflow/plan.md#m4)，真实证据见 [测试记录](test-cases.md#11-m3-实际执行记录)。
 
 ## 1. 本次确认的行为
 
@@ -48,7 +48,7 @@ flowchart LR
 
 ### 3.1 账号
 
-注册按 C6 校验用户名和密码，不对密码 trim、截断或变更 Unicode 表示。用户名不小写化；重复注册由大小写敏感唯一索引兜底。技术方案使用 Node.js 异步 scrypt、每账号独立随机盐和包含算法参数的哈希编码，登录时比较派生结果；具体工作参数在 M2 固定并记录。注册成功返回账号基本信息，页面引导登录。
+注册按 C6 校验用户名和密码，不对密码 trim、截断或变更 Unicode 表示。用户名不小写化；重复注册由大小写敏感唯一索引兜底。实现使用 Node.js 异步 scrypt，N=32768、r=8、p=1、maxmem=64MiB、随机盐16字节、派生结果64字节；编码为 scrypt$N$r$p$saltHex$keyHex，比较采用 timingSafeEqual。验证编码时只接受当前受支持参数，避免从存储字符串任意放大计算开销。注册和登录均拒绝含未配对 UTF-16 代理项的密码，避免 UTF-8 编码时静默替换为其他字符；合法 Unicode 不作归一化。注册成功返回账号基本信息，页面引导登录。
 
 密码及哈希不进入响应、AI 日志或请求诊断内容。[Node.js crypto](https://nodejs.org/api/crypto.html#cryptoscryptpassword-salt-keylen-options-callback)提供异步 scrypt 与相关密码处理接口。
 
@@ -60,7 +60,8 @@ flowchart LR
 - 使用 `rolling: false`、`resave: false`、`saveUninitialized: false`；另以 absoluteExpiresAt 控制真实登录有效期，并对齐 Cookie/持久化过期时间，不能仅凭 rolling=false 断言不会续期。
 - Cookie 使用 HttpOnly、SameSite=Lax；本机 HTTP 的 Secure=false，HTTPS 环境才启用 Secure。
 - 写请求携带会话 CSRF token；注册/登录前可通过独立 GET 接口取得 token，登录或退出后更新 token。受保护写接口先判定登录，再检查 CSRF，使登录过期能正确返回 401。
-- 登出销毁当前 session 并清除 Cookie。读取/处理会话时不自动刷新业务有效期。
+- 登出销毁当前 session 并清除 Cookie。读取/处理会话时不自动刷新业务有效期。已有 CSRF token 的读取不执行会话 save，避免与登出并发时通过 upsert 恢复已撤销会话；固定到期无需续期，store.touch 不写数据库，显式创建/登录仍正常保存。
+- M2 在每个请求会话实例上固定 touch 的 Cookie expires 为 absoluteExpiresAt，与 connect-mongo 的存储到期时间对齐；真实集成测试同时断言持续访问后的 expires 与授权边界。
 
 库可能更新存储过期时间，因此必须通过频繁访问仍在原 24 小时时刻失效的测试验证本方案。[express-session](https://expressjs.com/en/resources/middleware/session/)说明 Cookie 与服务端会话机制；[connect-mongo](https://github.com/jdesboeufs/connect-mongo)说明存储、touch 和过期行为。
 
@@ -72,7 +73,7 @@ flowchart LR
 
 ## 4. 草稿、发布与修订
 
-草稿保存执行结构校验：字段类型、已生成 ID 格式与唯一性合法。未完成题目可用空标题、空选项数组、未选规则目标 null 表示；不允许把任意对象当成答案或规则执行。
+草稿保存执行结构校验：字段类型、已生成 ID 格式与唯一性合法。未完成题目可用空标题、空选项数组、未选规则目标 null 表示；条件缺省/null、空多选集合和between单边null也可作为草稿保存，空操作符规范为缺省；不允许把任意对象当成答案或规则执行。
 
 完整校验用于发布，以及 firstPublishedAt 已非空时的题目更新：标题/题干非空、至少一题、选择题有合法选项、上下限一致、条件与题型兼容、引用存在。允许循环、前向及后向目标，不做无环限制。
 
@@ -184,7 +185,7 @@ requestId 是一次主动提交的 UUID，网络重试保持不变。内容摘�
 
 ## 10. M1 测试覆盖映射
 
-以下是待实施测试范围，全部尚未执行；M1 要求明确输入和预期方向，不要求此时已有运行结果。具体步骤、数据和结果栏已整理到 [测试方案与用例](test-cases.md)，本节保留需求覆盖概览。
+以下是 M1 建立的覆盖范围；M2 已执行账号、会话及个人列表子例；M3 新增U09定义与I04/I05管理子例，其余随对应里程碑实施。具体步骤、数据和结果栏已整理到 [测试方案与用例](test-cases.md)，本节保留需求覆盖概览。
 
 | 需求 | 测试场景/输入 | 预期结果 |
 | --- | --- | --- |
@@ -201,4 +202,4 @@ requestId 是一次主动提交的 UUID，网络重试保持不变。内容摘�
 | R8/D7 | 单选 A/B/A、多选 [X,Y]/[Y]/空、数字 10/20/空、零答卷 | A=2/B=1；X=1/Y=2、有效数=2；均值15；零数据约定一致 |
 | R9 | 从需求编号定位设计、接口及后续测试步骤 | 每项可追溯，不将未运行用例标为通过 |
 
-M1 已交付设计与测试方案，下一步按 M2 建立基础服务和账号；测试代码随对应业务模块实现，不能据设计文档将实现或测试标为完成。
+M1—M3 已由用户验收，问卷管理已有实现和真实测试证据；M4仅编制计划，填写提交与统计留待 M4—M5，测试随模块实现。具体文件与结果以计划和测试记录为准。

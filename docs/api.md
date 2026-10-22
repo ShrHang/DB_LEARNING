@@ -1,13 +1,13 @@
 # API 初稿
 
-状态：接口合同草案，尚未实现。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
+状态：账号及本文件第3节全部问卷管理接口已实现并完成M2/M3验收；第4—5节填写提交与统计仍为 M4—M5 合同，尚未实现。M4计划见 [plan.md](../workflow/plan.md#m4)，本轮尚未实施。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
 
 ## 1. 公共约定
 
 - JSON 请求/响应；ObjectId 使用字符串，日期使用带时区 ISO 8601。
 - 需要登录的接口使用 Cookie 会话；写接口使用 `X-CSRF-Token`。先通过 `GET /auth/csrf` 获取 token，登录成功后使用新会话 token。
 - 成功通常返回 `{ "data": ... }`，204 无正文。失败返回 `{ "error": { "code", "message", "details": [] } }`。
-- 字段白名单校验，未知或服务端专属字段拒绝；解析和类型错误为 400，业务输入不合要求为 422。
+- 字段白名单校验，未知或服务端专属字段拒绝；JSON/压缩正文解析和字段类型错误为 400，业务输入不合要求为 422；正文超过1MiB为413，不支持的字符集/内容编码为415。
 - 作者资源查询限定 ownerId；资源不存在与越权统一 404。
 - 管理更新在正文携带读取时的 revision；过时版本为 409，不自动覆盖。
 - 分页默认 20 条，limit 可设 1—100，返回 items、nextCursor；游标包含稳定排序位置，不授予访问权限。此为技术默认参数，不是问卷答题次数限制。
@@ -22,7 +22,7 @@
 | GET /auth/me | 登录 | 200，user、固定 expiresAt |
 | POST /auth/logout | 登录、CSRF | 204，销毁当前会话并清 Cookie |
 
-用户名和密码规则按 C6；密码错误统一为 INVALID_CREDENTIALS，不返回哈希。未登录或固定期限到期为 AUTH_REQUIRED，401。
+用户名和密码规则按 C6；密码含未配对 Unicode 代理项时422，不静默替换。凭据不匹配统一为 INVALID_CREDENTIALS，不返回哈希。注册 data 为 {id, username, createdAt}；登录和 me 的 user 使用相同白名单。未登录或固定期限到期为 AUTH_REQUIRED，401。
 
 ## 3. 问卷管理
 
@@ -36,7 +36,11 @@
 | POST /surveys/:id/close | 作者、CSRF；revision | 200，关闭状态及新 revision |
 | POST /surveys/:id/reopen | 作者、CSRF；revision | 200，重开状态及新 revision，须满足截止要求 |
 
-questions 采用完整数组提交以支持新增、删除和重排，数组中现有题目/选项的 ID 保持不变；结构见数据库文档。status、ownerId、contentLocked、firstPublishedAt 等字段由服务端管理，不能通过 PATCH 任意覆盖。
+M2 列表摘要为 {id, title, description, status, deadlineAt, createdAt, updatedAt}；无问卷时 items=[]、nextCursor=null。cursor 是创建时间及 ID 的 base64url 编码，只影响分页位置；ownerId 始终来自会话，未知查询参数或无效分页参数400。
+
+管理 data 白名单为 {id, slug, title, description, status, settings, deadlineAt, questions, revision, definitionRevision, contentLocked, firstSubmittedAt, firstPublishedAt, createdAt, updatedAt, schemaVersion, shareUrl}，shareUrl 为相对路径 /survey/:slug，不返回 ownerId。
+
+questions 采用完整数组提交以支持新增、删除和重排，数组中现有题目/选项的 ID 保持不变；结构见数据库文档。草稿允许未选条件、null条件值/目标和区间单边null；空操作符入库前规范为缺省。发布及首次发布后的编辑要求完整合法。题目实质变化才递增definitionRevision，单纯元信息/原样questions仅递增revision。status、ownerId、contentLocked、firstPublishedAt 等字段由服务端管理，不能通过 PATCH 任意覆盖。
 
 ## 4. 填写与提交
 
@@ -93,12 +97,12 @@ expectedUserId 只用于防止恢复登录后意外换账号，服务端实际�
 | 409 ACCOUNT_CHANGED | 当前账号与 expectedUserId 不同，提示恢复原账号 |
 | 409 REVISION_CONFLICT | 管理页 revision 过期，保留未保存编辑并提示重新加载/合并 |
 | 409 DEFINITION_CHANGED | 填写页题目定义过期，提示重新载入填写 |
-| 409 CONTENT_LOCKED / POLICY_FROZEN | 首份答卷后改题目，或首次发布后改填写策略 |
+| 409 CONTENT_LOCKED / SETTINGS_LOCKED | 首份答卷后改题目，或首次发布后改填写策略 |
 | 409 SURVEY_NOT_OPEN | 已关闭或已到截止；此前打开页面不构成受理 |
 | 409 ALREADY_SUBMITTED | 当前账号已用完一次提交机会 |
 | 409 IDEMPOTENCY_CONFLICT | 同提交标识对应不同内容 |
-| 422 DEFINITION_INVALID / ANSWER_INVALID | 发布定义或答案不合法，details 定位字段/题目 |
+| 422 VALIDATION_FAILED / ANSWER_INVALID | 发布定义或答案不合法，details 定位字段/题目 |
 | 422 PATH_NOT_COMPLETE / ANSWER_OUTSIDE_PATH | 最终答案未形成结束路径，或含路径外答案；不保存答卷 |
 | 503 TEMPORARY_UNAVAILABLE | 数据库/事务暂时失败，保留相同请求标识和负载重试 |
 
-事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。具体驱动异常分类、响应示例与每个接口的完整字段 schema 在实现时补充，不能将本草案当成已部署 API。
+事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。填写提交的驱动异常分类、响应示例与完整字段 schema 在M4实现时补充；账号/管理已按前文实现，第4—5节仍不能当作已部署API。

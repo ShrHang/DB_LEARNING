@@ -1,0 +1,29 @@
+import { Long } from 'mongodb';
+
+const countFields = ['minSelections', 'maxSelections', 'minLength', 'maxLength'];
+function storageQuestions(questions) {
+  return questions.map(question => {
+    const validation = { ...question.validation };
+    for (const field of countFields) {
+      const value = validation[field];
+      if (Number.isSafeInteger(value) && value > 2147483647) validation[field] = Long.fromNumber(value);
+    }
+    return { ...question, validation };
+  });
+}
+
+export async function findOwnSurveyPage(db, { ownerId, before, limit }) {
+  const filter = { ownerId };
+  if (before) filter.$or = [{ createdAt: { $lt: before.createdAt } }, { createdAt: before.createdAt, _id: { $lt: before.id } }];
+  const projection = { _id: 1, title: 1, description: 1, status: 1, deadlineAt: 1, createdAt: 1, updatedAt: 1 };
+  return db.collection('surveys').find(filter, { projection }).sort({ createdAt: -1, _id: -1 }).limit(limit + 1).toArray();
+}
+
+export function createSurveyRepository(db) {
+  const surveys = db.collection('surveys');
+  return {
+    insert: document => surveys.insertOne({ ...document, questions: storageQuestions(document.questions) }),
+    findOwn: (_id, ownerId) => surveys.findOne({ _id, ownerId }),
+    updateOwn: (filter, changes) => surveys.findOneAndUpdate(filter, { $set: { ...changes, ...(Object.hasOwn(changes, 'questions') ? { questions: storageQuestions(changes.questions) } : {}) }, $inc: { revision: 1 } }, { returnDocument: 'after', includeResultMetadata: false })
+  };
+}

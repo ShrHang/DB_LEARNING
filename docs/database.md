@@ -1,6 +1,6 @@
 # MongoDB 数据库设计初稿
 
-状态：B1—B8 数据需求已确认；以下集合、字段和索引为技术设计初稿，尚无数据库初始化代码或测试结果。依据见 [requirements.md](requirements.md)。
+状态：M1—M3 已验收；已实现四集合基础 validator、索引和幂等初始化，并以真实副本集验证约束与事务能力。代码见 [初始化](../src/db/init.js)，证据见 [测试记录](test-cases.md#10-m2-实际执行记录)。M3 已实现草稿结构与发布完整校验、管理条件更新、冻结限制与旧校验器兼容升级；提交事务、路径与统计仍是后续里程碑的设计。依据见 [requirements.md](requirements.md)。
 
 ## 1. 已确认的数据需求
 
@@ -9,7 +9,7 @@
 | B1 | 成功提交的答卷不可修改或撤回；再次填写形成新答卷，须符合重复填写策略 |
 | B2 | 仅长期保存最终有效答案及必要路径信息，不长期保存完整交互历史，不提供过程回放 |
 | B3 | 旧答卷展示当前问卷标题和说明，不保存标题/说明历史快照 |
-| B4 | 本机配置单节点副本集，使用事务保证首份答卷保存和内容冻结一致；本次不修改服务 |
+| B4 | 本机配置单节点副本集，使用事务保证首份答卷保存和内容冻结一致；M2 已建立独立实例，业务提交事务在 M4 实现 |
 | B5 | 内容定义变化后，旧版页面提交被拒绝，提示重新载入最新版填写 |
 | B6 | 用户名区分大小写，Alice 和 alice 可分别注册 |
 | B7 | 普通数值计算即可，整数必须能精确表示，不要求精确十进制运算 |
@@ -91,9 +91,10 @@ contentLocked 与答卷存在性有关，但保留该字段用于问卷文档上
 
 - 内部题型：single_choice、multiple_choice、text、number。
 - 选择题额外包含 `options: [{ id, label }]`。
-- 多选约束使用 minSelections/maxSelections；精确 N 个表示为两者均为 N。
+- 多选约束使用 minSelections/maxSelections；精确 N 个表示为两者均为 N。长度/选择数量为非负安全整数；超过Int32的计数在仓储写入时编码为BSON Long，驱动读取后仍为安全范围内的JavaScript Number，API不暴露BSON对象。
 - 文本约束使用 minLength/maxLength；数字使用 min/max/integer。
 - 操作符白名单：eq、ne、gt、gte、lt、lte、between、contains_any、contains_all、equals_set；between 使用 `[min, max]`，多选条件使用选项 ID 数组。
+- M3 草稿条件值允许null，多选允许空数组，between允许[下界或null, 上界或null]；空操作符规范为缺省。完整定义不接受这些未完成条件。数据库初始化仅精确认识已交付M2的旧surveys validator并扩展区间null占位，不改文档和schemaVersion，不覆盖其他不兼容修改。
 - 完整定义中 target 为题目 ID 或保留值 END；草稿未选目标可暂存 null，发布及首次发布后的内容保存时必须补全。无匹配默认下一题，空答不匹配条件。允许回跳和有环图。
 
 ## 6. submissions
@@ -159,7 +160,7 @@ B8 消除了长期保存完整作答历史的需求。设本次提交使用的�
 
 会话技术方案为 express-session + connect-mongo，文档形状由适配器管理，顶层包含会话主键、session 载荷及 expires。载荷保存 userId、issuedAt、absoluteExpiresAt、CSRF token 等；允许适配器采用其支持的序列化形状，不套用业务文档的 schemaVersion 要求。登录后固定 24 小时，不依赖适配器 touch 或 TTL 来判定是否仍登录。
 
-本机采用单节点副本集支持事务；当前只确认设计，不更改现有服务。[MongoDB 事务运行条件](https://www.mongodb.com/docs/manual/core/transactions-production-consideration/)、[副本集初始化说明](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/)及[单文档原子性/条件更新](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/)提供技术依据。
+本机采用项目独立单节点副本集支持事务；M2 已验证事务提交与回滚，未变更现有系统服务。[MongoDB 事务运行条件](https://www.mongodb.com/docs/manual/core/transactions-production-consideration/)、[副本集初始化说明](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/)及[单文档原子性/条件更新](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/)提供技术依据。
 
 ## 10. 校验、统计与后续工作
 
@@ -167,5 +168,5 @@ B8 消除了长期保存完整作答历史的需求。设本次提交使用的�
 - 统计从 submissions 聚合，不单独持久化选项计数。按有效非空答案统计，填空明细分页，数值均值不包含空答，0 是有效数值。
 - 设计建议：未选选项显示 0；无有效数值时平均值返回 null；有效回答数为 0 时百分比返回 null，页面显示“暂无数据”，避免除零。此为展示约定草案。
 - 保留 schemaVersion 和迁移脚本机制，以增量方式扩展第二阶段；第一阶段不预建未知需求的题库、历史版本或统计缓存。
-- 当前已找到本机 node/npm/mongod/mongosh 可执行文件；M2 已确认使用项目独立单节点副本集（默认端口27018、数据目录local/mongodb），保留现有实例；尚未配置或核查其连接及事务能力，不等于环境验收通过。具体实施见 [M2 计划](../workflow/plan.md#m2)。
-- 空值/文本计数、账号输入、API 和会话方案已进入后端设计初稿；后续编写初始化/索引/schema 代码，并用真实 MongoDB 验证并发、事务回滚、版本冲突、匿名隔离与聚合结果。
+- M2 已建立项目独立副本集：27018、local/mongodb、questionnaire-rs；验证可写主节点、初始化幂等、唯一/部分唯一索引与事务能力。启停脚本仅操作通过归属检查的项目实例。运行方法见 [README](../README.md)，进度见 [已交付与M4计划](../workflow/plan.md#m4)。
+- 初始化/索引/schema、账号会话及问卷定义/管理已实现；答案规则执行、提交业务的版本冲突/并发/匿名隔离以及统计聚合仍留待 M4—M5，不能以数据库能力测试替代业务验收。

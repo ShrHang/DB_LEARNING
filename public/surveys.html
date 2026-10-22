@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>我的问卷 · 问卷系统</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/surveys.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header"><a class="brand" href="/">问卷系统</a><div class="account"><span id="account-name" class="muted"></span><button id="logout-button" class="secondary" type="button" disabled>退出登录</button></div></header>
+  <main id="main" class="workspace">
+    <div class="page-heading"><div><p class="eyebrow">个人工作台</p><h1>我的问卷</h1></div><div class="toolbar"><a class="button" href="/editor.html">创建问卷</a><button id="refresh-button" class="secondary" type="button" disabled>刷新列表</button></div></div>
+    <p class="muted">仅展示当前账号的问卷。创建时请选择匿名策略，再添加题目和跳转规则。</p>
+    <p id="list-status" class="hint" role="status" aria-live="polite">正在确认登录状态…</p>
+    <p id="list-error" class="notice error" role="alert" tabindex="-1" hidden></p>
+    <section id="list-region" aria-label="问卷列表" aria-busy="true">
+      <div id="empty-state" class="panel empty-state" hidden><h2>还没有问卷</h2><p class="muted">点击“创建问卷”，从一份草稿开始。</p></div>
+      <ul id="survey-list" class="survey-list"></ul>
+    </section>
+    <nav id="pagination" class="pagination" aria-label="问卷列表分页" hidden><button id="previous-button" class="secondary" type="button" disabled>上一页</button><span id="page-number" aria-current="page">第 1 页</span><button id="next-button" class="secondary" type="button" disabled>下一页</button></nav>
+    <noscript><p class="notice error">请启用 JavaScript 后查看个人问卷列表。</p></noscript>
+  </main>
+</body>
+</html>
