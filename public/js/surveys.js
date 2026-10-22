@@ -56,7 +56,15 @@ function render(items) {
     }
     const edit = element('a', '编辑问卷', 'button secondary');
     edit.href = `/editor.html?id=${encodeURIComponent(survey.id)}`;
-    card.append(metadata, edit);
+    const actions = element('div', undefined, 'toolbar');
+    actions.append(edit);
+    if (survey.id) {
+      const statistics = element('a', '统计与答卷', 'button secondary');
+      statistics.href = `/statistics.html?id=${encodeURIComponent(survey.id)}`;
+      statistics.dataset.action = 'statistics';
+      actions.append(statistics);
+    }
+    card.append(metadata, actions);
     return card;
   });
   list.replaceChildren(...cards);

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>统计与答卷 · 问卷系统</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/statistics.css">
+  <script type="module" src="/js/statistics.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header">
+    <a class="brand" href="/">问卷系统</a>
+    <nav aria-label="作者导航"><a href="/surveys.html">我的问卷</a><span id="account-name"></span><button id="change-account" type="button" class="secondary">重新登录</button></nav>
+  </header>
+  <main id="main" class="workspace statistics-workspace">
+    <div class="page-heading"><h1>统计与答卷</h1><div class="toolbar"><a id="edit-link" class="button secondary" hidden>编辑问卷</a><button id="refresh-button" type="button" class="secondary" disabled>刷新统计</button></div></div>
+    <p id="page-status" class="hint" role="status" aria-live="polite">正在确认登录状态…</p>
+    <div id="page-error" class="notice error" role="alert" hidden><p id="page-error-text"></p><button id="page-retry" type="button" class="secondary">重试</button></div>
+
+    <section id="login-panel" class="panel statistics-section" aria-labelledby="login-heading" hidden>
+      <h2 id="login-heading">登录后查看原问卷</h2>
+      <p id="login-notice">请重新登录。登录成功后会重新检查当前账号是否为本问卷作者。</p>
+      <form id="login-form">
+        <div class="field"><label for="login-username">用户名</label><input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+        <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
+        <p id="login-error" class="notice error" role="alert" hidden></p>
+        <button id="login-submit" type="submit">登录并重新加载</button>
+        <p id="login-status" class="hint" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <div id="statistics-content" hidden>
+      <section class="panel statistics-section" aria-labelledby="survey-title">
+        <h2 id="survey-title"></h2><p id="survey-description" class="answer-value muted"></p>
+        <p class="total">成功答卷数 <strong id="total-submissions">0</strong></p>
+        <p id="zero-state" class="notice" hidden>尚无成功答卷。各题仍显示当前题目定义；没有有效回答时显示“暂无数据”。</p>
+        <p class="hint">有效回答数只计最终路径内的非空回答，数值 0 计入。分页每页最多 20 条；刷新可读取最新答卷，各次读取可能有新增数据。</p>
+      </section>
+
+      <section class="panel statistics-section" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">整卷逐题统计</h2><div id="question-overview"></div>
+      </section>
+
+      <section class="panel statistics-section" aria-labelledby="question-heading">
+        <h2 id="question-heading">单题统计与非空回答</h2>
+        <div class="field"><label for="question-select">选择题目</label><select id="question-select" disabled></select></div>
+        <p id="question-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="question-error" class="notice error" role="alert" hidden><p id="question-error-text"></p><button id="question-retry" class="secondary" type="button">重试单题统计</button></div>
+        <div id="question-statistics"></div>
+        <h3>该题非空有效回答</h3>
+        <p id="answers-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="answers-error" class="notice error" role="alert" hidden><p id="answers-error-text"></p><button id="answers-retry" class="secondary" type="button">重试回答列表</button></div>
+        <ol id="answers-list" class="response-list"></ol>
+        <nav id="answers-pagination" class="pagination" aria-label="逐题回答分页" hidden><button id="answers-previous" type="button" class="secondary" disabled>上一页</button><span id="answers-page"></span><button id="answers-next" type="button" class="secondary" disabled>下一页</button></nav>
+      </section>
+
+      <section class="panel statistics-section" aria-labelledby="submissions-heading">
+        <h2 id="submissions-heading">答卷列表</h2>
+        <p id="submissions-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="submissions-error" class="notice error" role="alert" hidden><p id="submissions-error-text"></p><button id="submissions-retry" class="secondary" type="button">重试答卷列表</button></div>
+        <ol id="submissions-list" class="response-list"></ol>
+        <nav id="submissions-pagination" class="pagination" aria-label="答卷分页" hidden><button id="submissions-previous" type="button" class="secondary" disabled>上一页</button><span id="submissions-page"></span><button id="submissions-next" type="button" class="secondary" disabled>下一页</button></nav>
+      </section>
+
+      <section id="detail-panel" class="panel statistics-section" aria-labelledby="detail-heading" hidden>
+        <div class="item-heading"><h2 id="detail-heading" tabindex="-1">完整有效答卷</h2><button id="detail-close" type="button" class="secondary">关闭详情</button></div>
+        <p id="detail-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="detail-error" class="notice error" role="alert" hidden><p id="detail-error-text"></p><button id="detail-retry" class="secondary" type="button">重试答卷详情</button></div>
+        <div id="detail-content"></div>
+      </section>
+    </div>
+    <noscript><p class="notice error">请启用 JavaScript 后查看统计与答卷。</p></noscript>
+  </main>
+</body>
+</html>

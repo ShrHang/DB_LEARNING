@@ -167,6 +167,9 @@ function displayStatus() {
 }
 function applySurvey(data) {
   survey = data;
+  $('#statistics-link').hidden = !data.id;
+  if (data.id) $('#statistics-link').href = `/statistics.html?id=${encodeURIComponent(data.id)}`;
+  else $('#statistics-link').removeAttribute('href');
   questions = structuredClone(data.questions || []);
   ready = true;
   dirty = false;

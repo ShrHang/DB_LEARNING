@@ -10,6 +10,7 @@ import { createUserRepository } from './repositories/users.js';
 import { createSurveyService } from './services/survey-service.js';
 import { createFillService } from './services/fill-service.js';
 import { createSubmissionService } from './services/submission-service.js';
+import { createStatisticsService } from './services/statistics-service.js';
 
 export const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const cookieName = 'questionnaire.sid';
@@ -125,6 +126,12 @@ export function createApp({ db, client, config, clock = { now: () => Date.now() 
     const data = await submissions.submit(req.user.id, req.params.slug, req.body);
     res.status(data.replayed ? 200 : 201).json({ data });
   });
+  const statistics = createStatisticsService({ db });
+  app.get('/api/surveys/:id/statistics', requireAuth, async (req, res) => res.json({ data: await statistics.get(req.user.id, req.params.id, req.query) }));
+  app.get('/api/surveys/:id/questions/:questionId/statistics', requireAuth, async (req, res) => res.json({ data: await statistics.question(req.user.id, req.params.id, req.params.questionId, req.query) }));
+  app.get('/api/surveys/:id/questions/:questionId/answers', requireAuth, async (req, res) => res.json({ data: await statistics.answers(req.user.id, req.params.id, req.params.questionId, req.query) }));
+  app.get('/api/surveys/:id/submissions', requireAuth, async (req, res) => res.json({ data: await statistics.submissions(req.user.id, req.params.id, req.query) }));
+  app.get('/api/surveys/:id/submissions/:submissionId', requireAuth, async (req, res) => res.json({ data: await statistics.submission(req.user.id, req.params.id, req.params.submissionId, req.query) }));
   app.use((req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: '资源或接口不存在', details: [] } }));
   app.use(errorHandler);
   return app;

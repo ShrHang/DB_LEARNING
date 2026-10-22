@@ -1,6 +1,6 @@
-# API 初稿
+# API 约定
 
-状态：账号及本文件第3节全部问卷管理接口已实现并完成M2/M3验收；第4节填写提交已实现并通过用户验收；第5节统计仍为M5合同。M4交付见 [plan.md](../workflow/plan.md#m4)，M5计划见[下一阶段安排](../workflow/plan.md#m5)，等待第3轮提交后实施。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
+状态：账号及本文件第3节全部问卷管理接口已实现并完成M2/M3验收；第4节填写提交已实现并通过用户验收；第5节统计及明细已实现并通过用户验收。M4交付见 [plan.md](../workflow/plan.md#m4)，M5交付见[索引](../workflow/plan.md#m5)，用户已提交8412ede，第4轮M5实现及自动验证完成。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
 
 ## 1. 公共约定
 
@@ -101,21 +101,35 @@ POST顶层五个字段均须提供；requestId为UUID（大小写统一小写）
 
 匿名答卷响应使用 anonymous=true、respondent=null；实名使用允许展示的用户名对象。答卷 ID 是答卷标识，不包含账号关联字段。标题/说明从当前问卷读取。
 
-### 5.1 M5实施合同基线（尚未部署）
+### 5.1 M5统计与明细行为
 
 本节5个GET均需登录及作者权限；草稿/关闭/到期不阻止作者读取。统计包括该问卷所有成功答卷，不按当前登录作者作为respondent过滤；不存在/越权问卷、非本卷题目、非本卷答卷统一404。
 
-统计输出以问卷与题目/选项元信息、totalSubmissions、answeredCount、count/percentage及数字average为白名单；零次选项仍列出，空分母percentage=null，空数值average=null。整卷与单题使用同一统计口径；具体嵌套DTO在M5-01固定后再派工，不能视为现有API返回。
+统计输出以问卷与题目/选项元信息、totalSubmissions、answeredCount、count/percentage及数字average为白名单；零次选项仍列出，空分母percentage=null，空数值average=null。整卷与单题使用同一统计口径；具体嵌套DTO见第5.2节，已按该合同实现。
 
-答卷摘要候选字段为 `{submissionId,submittedAt,anonymous,respondent}`，逐题条目增加value；完整答卷包括最终answers与effectivePath，元信息显示当前问卷版本。匿名respondent=null，实名仅为 `{username}`；这些响应及分页游标均排除账号ID、respondentId、requestId、requestHash、singleOnly、会话及密码字段。页面不能通过接收原文档再隐藏字段来代替服务端过滤。
+答卷摘要字段为 `{submissionId,submittedAt,anonymous,respondent}`，逐题条目增加value；完整答卷包括最终answers与effectivePath，元信息显示当前问卷版本。匿名respondent=null，实名仅为 `{username}`；这些响应及分页游标均排除账号ID、respondentId、requestId、requestHash、singleOnly、会话及密码字段。页面不能通过接收原文档再隐藏字段来代替服务端过滤。
 
-两个分页接口只接受cursor/limit，默认20、范围1—100，返回items/nextCursor；按submittedAt/_id降序读取，逐题列表仅包含该题非空有效回答。未知query/无效limit或cursor为400；游标的具体编码与资源作用域在M5-01固定，不能改变作者授权条件。只读接口不修改问卷/答卷或延长会话，各次分页/统计读取不承诺锁定同一快照。
+两个分页接口只接受cursor/limit，默认20、范围1—100，返回items/nextCursor；按submittedAt/_id降序读取，逐题列表仅包含该题非空有效回答。未知query/无效limit或cursor为400；游标编码与资源作用域见第5.2节，不能改变作者授权条件。只读接口不修改问卷/答卷或延长会话，各次分页/统计读取不承诺锁定同一快照。
+
+### 5.2 M5实际DTO与分页合同
+
+`createStatisticsService({db})`提供`get(userId,id,query={})`、`question(userId,id,questionId,query={})`、`answers(userId,id,questionId,query={})`、`submissions(userId,id,query={})`、`submission(userId,id,submissionId,query={})`，路由调用后统一包装data。resource ID非法/不存在/越权404；先验证所有权再处理作者查询，未知query400 INVALID_QUERY，无效游标400 INVALID_CURSOR。非分页GET不接收query。
+
+- 整卷data：`{survey:{id,title,description},totalSubmissions,questions:[QuestionStats]}`。
+- 单题data：`{survey:{id,title,description},question:QuestionStats}`。
+- QuestionStats：`{questionId,type,title,answeredCount}`，选择题再含`options:[{id,label,count,percentage}]`，数字题再含`average`。题目/选项按定义顺序保留；文本只需answeredCount及回答明细入口。
+- 答卷摘要：`{submissionId,submittedAt,anonymous,respondent}`；逐题列表条目增加value。两个列表data均为`{items,nextCursor}`。
+- 完整答卷data：`{survey:{id,title,description},submissionId,submittedAt,anonymous,respondent,definitionRevision,effectivePath,answers:[{questionId,value}]}`；题目/选项显示信息由已授权统计定义提供，不附交互历史。标题说明取本次读取的当前问卷。
+
+匿名respondent=null，实名仅含`{username}`；如实名账号关联缺失则null，不能以内部ID代替。数据库的内部字段不透传。分页默认20、limit1—100；cursor为base64url JSON，严格仅包含`{surveyId,questionId,submittedAt,id}`，questionId=null表示答卷列表，否则为指定题目。submittedAt是规范ISO日期，id为答卷ObjectId；游标与当前资源不匹配400，不能影响授权或携带用户身份。取limit+1并以submittedAt/_id降序翻页，末页nextCursor=null。
+
+作者页面`/statistics.html?id=<问卷ID>`；统计/详情只读，登录失效可同页重登并重新加载原资源，换账号时重新校验作者权限。页面平均值/百分比最多显示2位小数（技术展示默认），接口保留未舍入数值；null显示暂无数据，0显示0。
 
 ## 6. 错误与处理
 
 | HTTP / code | 场景与页面行为 |
 | --- | --- |
-| 400 INVALID_REQUEST | 格式、ID、类型或分页参数非法，提示对应字段 |
+| 400 INVALID_REQUEST / INVALID_QUERY / INVALID_CURSOR | 请求格式、类型或查询/分页参数非法；资源ID非法按资源查询约定返回404 |
 | 401 AUTH_REQUIRED / INVALID_CREDENTIALS | 登录缺失、到期或凭据错误；填写页恢复登录 |
 | 403 CSRF_INVALID | 刷新会话 token 后按当前身份重试 |
 | 404 NOT_FOUND | 不存在、草稿填写入口或作者无权访问 |
@@ -131,4 +145,7 @@ POST顶层五个字段均须提供；requestId为UUID（大小写统一小写）
 | 422 PATH_NOT_COMPLETE / ANSWER_OUTSIDE_PATH | 最终答案未形成结束路径，或含路径外答案；不保存答卷 |
 | 503 TEMPORARY_UNAVAILABLE | 数据库/事务暂时失败，保留相同请求标识和负载重试 |
 
-事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。填写提交已实现如下合同；第5节统计尚未部署。通用认证或数据库读取异常也可能返回503 SERVICE_UNAVAILABLE，同样保留原提交标识重试。
+事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。填写提交已实现如下合同；第5节统计及明细亦已实现。通用认证或数据库读取异常也可能返回503 SERVICE_UNAVAILABLE，同样保留原提交标识重试。
+
+
+删除整份问卷尚无已确认合同或DELETE接口；用户要求本轮提交后先使用选择框讨论，M6暂缓。本说明不影响既有题目删除与问卷关闭/重开行为，讨论安排见[计划](../workflow/plan.md#deletion-discussion)。
