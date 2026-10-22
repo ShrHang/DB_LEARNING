@@ -1,0 +1,5 @@
+#delete-dialog { width: min(34rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); overflow: auto; padding: 1.5rem; border: 1px solid #c8d4e1; border-radius: .8rem; color: inherit; }
+#delete-dialog::backdrop { background: rgb(20 35 50 / 55%); }
+#delete-title { overflow-wrap: anywhere; white-space: pre-wrap; }
+.danger { background: #a32323; border-color: #a32323; color: white; }
+.danger:hover:not(:disabled) { background: #801a1a; color: white; }

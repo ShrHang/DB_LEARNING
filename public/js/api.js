@@ -3,12 +3,13 @@ let csrfToken = null;
 let csrfRequest = null;
 
 export class ApiError extends Error {
-  constructor(status, code, message, details = []) {
+  constructor(status, code, message, details = [], requestPath = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.details = Array.isArray(details) ? details : [];
+    this.requestPath = requestPath;
   }
 }
 
@@ -26,14 +27,14 @@ async function send(path, { method = 'GET', body, token } = {}) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch {
-    throw new ApiError(0, 'NETWORK_ERROR', '无法连接服务器，请检查网络后重试。');
+    throw new ApiError(0, 'NETWORK_ERROR', '无法连接服务器，请检查网络后重试。', [], path);
   }
   if (response.status === 204 && response.ok) return undefined;
   let payload;
   try {
     payload = await response.json();
   } catch {
-    throw new ApiError(response.status, 'INVALID_RESPONSE', '服务器返回了无法识别的响应，请稍后重试。');
+    throw new ApiError(response.status, 'INVALID_RESPONSE', '服务器返回了无法识别的响应，请稍后重试。', [], path);
   }
   if (!response.ok) {
     if (response.status === 401) csrfToken = null;
@@ -42,10 +43,11 @@ async function send(path, { method = 'GET', body, token } = {}) {
       payload?.error?.code || 'REQUEST_FAILED',
       payload?.error?.message || '请求未能完成，请稍后重试。',
       payload?.error?.details,
+      path,
     );
   }
   if (!payload || !Object.hasOwn(payload, 'data')) {
-    throw new ApiError(response.status, 'INVALID_RESPONSE', '服务器响应缺少数据，请稍后重试。');
+    throw new ApiError(response.status, 'INVALID_RESPONSE', '服务器响应缺少数据，请稍后重试。', [], path);
   }
   return payload.data;
 }

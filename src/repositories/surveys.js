@@ -22,11 +22,12 @@ export async function findOwnSurveyPage(db, { ownerId, before, limit }) {
 export function createSurveyRepository(db) {
   const surveys = db.collection('surveys');
   return {
-    insert: document => surveys.insertOne({ ...document, questions: storageQuestions(document.questions) }),
-    findOwn: (_id, ownerId) => surveys.findOne({ _id, ownerId }),
+    insert: (document, session) => surveys.insertOne({ ...document, questions: storageQuestions(document.questions) }, { session }),
+    findOwn: (_id, ownerId, session) => surveys.findOne({ _id, ownerId }, { session }),
     findSlug: slug => surveys.findOne({ slug }),
     findId: (_id, session) => surveys.findOne({ _id }, { session }),
     freeze: (survey, acceptedAt, session) => surveys.updateOne({ _id: survey._id, definitionRevision: survey.definitionRevision, contentLocked: false }, { $set: { contentLocked: true, firstSubmittedAt: acceptedAt, updatedAt: acceptedAt }, $inc: { revision: 1 } }, { session }),
+    removeOwn: (survey, session) => surveys.deleteOne({ _id: survey._id, ownerId: survey.ownerId, revision: survey.revision }, { session }),
     updateOwn: (filter, changes) => surveys.findOneAndUpdate(filter, { $set: { ...changes, ...(Object.hasOwn(changes, 'questions') ? { questions: storageQuestions(changes.questions) } : {}) }, $inc: { revision: 1 } }, { returnDocument: 'after', includeResultMetadata: false })
   };
 }

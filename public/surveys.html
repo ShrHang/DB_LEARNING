@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>我的问卷 · 问卷系统</title>
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/surveys.css">
   <script type="module" src="/js/surveys.js"></script>
 </head>
 <body>
@@ -22,5 +23,22 @@
     <nav id="pagination" class="pagination" aria-label="问卷列表分页" hidden><button id="previous-button" class="secondary" type="button" disabled>上一页</button><span id="page-number" aria-current="page">第 1 页</span><button id="next-button" class="secondary" type="button" disabled>下一页</button></nav>
     <noscript><p class="notice error">请启用 JavaScript 后查看个人问卷列表。</p></noscript>
   </main>
+  <dialog id="delete-dialog" aria-labelledby="delete-heading" aria-describedby="delete-warning">
+    <form id="delete-form">
+      <h2 id="delete-heading">永久删除问卷</h2>
+      <p id="delete-warning">问卷及其全部答卷将永久删除，无法恢复。</p>
+      <div id="delete-preview" hidden>
+        <p>问卷：<strong id="delete-title"></strong></p>
+        <p>当前答卷数：<strong id="delete-count"></strong>（预览时数量）</p>
+        <div class="field"><label for="delete-confirmation">请输入“删除”二字以确认</label><input id="delete-confirmation" autocomplete="off" aria-describedby="delete-warning"></div>
+      </div>
+      <p id="delete-status" class="notice" role="status" aria-live="polite"></p>
+      <div class="toolbar">
+        <button id="delete-cancel" class="secondary" type="button">取消</button>
+        <button id="delete-retry" class="secondary" type="button" hidden>重试确认</button>
+        <button id="delete-submit" class="danger" type="submit" disabled>永久删除</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

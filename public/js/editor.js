@@ -14,6 +14,7 @@ let dirty = false;
 let busy = false;
 let ready = !idFromUrl;
 let controlId = 0;
+let unavailableId = null;
 const types = [['single_choice', '单选题'], ['multiple_choice', '多选题'], ['text', '文本题'], ['number', '数字题']];
 const statusNames = { draft: '草稿', published: '已发布', closed: '已关闭' };
 const numberOperators = [['eq', '等于'], ['ne', '不等于'], ['gt', '大于'], ['gte', '大于等于'], ['lt', '小于'], ['lte', '小于等于'], ['between', '区间内（含边界）']];
@@ -111,6 +112,31 @@ function fieldNode(path) {
 }
 function showError(error) {
   clearErrors();
+  const resourceId = survey?.id || unavailableId || idFromUrl;
+  const resourcePath = resourceId ? `/surveys/${encodeURIComponent(resourceId)}` : null;
+  if (error.status === 404 && error.code === 'NOT_FOUND' && resourcePath
+    && (error.requestPath === resourcePath || error.requestPath?.startsWith(`${resourcePath}/`))) {
+    unavailableId = resourceId;
+    survey = null;
+    questions = [];
+    ready = false;
+    dirty = false;
+    form.reset();
+    form.hidden = true;
+    questionList.replaceChildren();
+    $('#share-section').hidden = true;
+    $('#share-url').value = '';
+    $('#copy-status').textContent = '';
+    $('#statistics-link').hidden = true;
+    $('#statistics-link').removeAttribute('href');
+    $('#survey-status').textContent = '不可用';
+    $('#survey-status').className = 'badge';
+    $('#editor-heading').textContent = '问卷不可用';
+    document.title = '问卷不可用 · 问卷系统';
+    saveState.textContent = '';
+    saveState.classList.remove('unsaved');
+    message.textContent = '问卷不存在或已删除，或当前账号无权访问。已停止编辑，请返回列表或确认账号后重新读取。';
+  }
   let text = error.message || '操作未完成，请重试。';
   if (error.status === 401) text += ' 当前输入已保留。请在新标签页登录原账号，然后回到本页重试。';
   if (error.status === 409) text += ' 当前输入已保留。可先复制需要保留的内容，再点击“重新加载服务器版本”；重新加载会丢弃未保存输入。';
@@ -166,6 +192,8 @@ function displayStatus() {
   $('#survey-status').className = `badge ${Object.hasOwn(statusNames, survey.status) ? survey.status : ''}`;
 }
 function applySurvey(data) {
+  form.hidden = false;
+  unavailableId = null;
   survey = data;
   $('#statistics-link').hidden = !data.id;
   if (data.id) $('#statistics-link').href = `/statistics.html?id=${encodeURIComponent(data.id)}`;
@@ -448,7 +476,7 @@ async function perform(action) {
 async function reload() {
   if (busy) return;
   if (dirty && !confirm('重新加载会丢弃本页所有未保存输入，是否继续？')) return;
-  const id = survey?.id || idFromUrl;
+  const id = survey?.id || unavailableId || idFromUrl;
   if (!id) return;
   busy = true;
   updateControls();

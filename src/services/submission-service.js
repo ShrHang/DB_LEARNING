@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import { AppError } from '../errors.js';
 import { createSurveyRepository } from '../repositories/surveys.js';
 import { createSubmissionRepository } from '../repositories/submissions.js';
+import { createSurveyGuardRepository } from '../repositories/survey-guards.js';
 import { parseSubmissionRequest } from './submission-request.js';
 import { assertOpen } from './fill-service.js';
 import { resolveFinalPath } from '../shared/path.js';
@@ -23,13 +24,14 @@ function assertDefinition(survey, request) {
 export function createSubmissionService({ db, client, clock, hooks = {} }) {
   const surveys = createSurveyRepository(db);
   const submissions = createSubmissionRepository(db);
+  const guards = createSurveyGuardRepository(db);
   return { async submit(userId, slug, body) {
     const request = parseSubmissionRequest(body);
     if (request.expectedUserId !== userId) throw new AppError(409, 'ACCOUNT_CHANGED', '当前登录账号已变化，请在本页恢复原账号');
     const respondentId = new ObjectId(userId);
     let survey;
     try { survey = await surveys.findSlug(slug); } catch { throw temporary(); }
-    if (!survey) throw new AppError(404, 'NOT_FOUND', '问卷不存在');
+    if (!survey) throw new AppError(404, 'NOT_FOUND', '问卷不存在或已删除');
     const existing = () => submissions.findRequest(survey._id, respondentId, request.requestId);
     const replayExisting = document => {
       const previous = replay(document, request.requestHash);
@@ -68,6 +70,12 @@ export function createSubmissionService({ db, client, clock, hooks = {} }) {
           assertDefinition(current, request);
           const context = { survey: current, session, attempt: ++attempt };
           await hooks.afterAccepted?.(context);
+          // Every new submission, including those after content freezing, must
+          // conflict with deletion. Updating the survey itself here would also
+          // conflict with close and break its established acceptance semantics.
+          const guarded = await guards.touch(current._id, session);
+          if (!guarded.matchedCount) throw temporary();
+          await hooks.afterGuard?.(context);
           const previous = replayExisting(await submissions.findRequest(current._id, respondentId, request.requestId, session));
           if (previous) return previous;
           if (!current.contentLocked) {

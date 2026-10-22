@@ -1,6 +1,6 @@
 # API 约定
 
-状态：账号及本文件第3节全部问卷管理接口已实现并完成M2/M3验收；第4节填写提交已实现并通过用户验收；第5节统计及明细已实现并通过用户验收。M4交付见 [plan.md](../workflow/plan.md#m4)，M5交付见[索引](../workflow/plan.md#m5)，用户已提交8412ede，第4轮M5实现及自动验证完成。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
+状态：账号、第3节问卷管理、第4节填写提交、第5节统计/明细及第6节永久删除均已实现并通过用户验收。M4交付见[索引](../workflow/plan.md#m4)，M5见[索引](../workflow/plan.md#m5)，第4轮已提交8f0c5fc；[删除交付](../workflow/plan.md#deletion-discussion)已验收，待用户提交第5轮。M6已规划，尚未执行。业务依据见 [requirements.md](requirements.md)，实现流程见 [design.md](design.md)。所有路径以 `/api` 开头，由同一个 Express 应用提供。
 
 ## 1. 公共约定
 
@@ -148,4 +148,25 @@ POST顶层五个字段均须提供；requestId为UUID（大小写统一小写）
 事务提交结果暂不确定时不能声称必然保存失败；页面提示“提交结果待确认，请重试确认”，同请求重试由幂等协议返回最终结果。填写提交已实现如下合同；第5节统计及明细亦已实现。通用认证或数据库读取异常也可能返回503 SERVICE_UNAVAILABLE，同样保留原提交标识重试。
 
 
-删除整份问卷尚无已确认合同或DELETE接口；用户要求本轮提交后先使用选择框讨论，M6暂缓。本说明不影响既有题目删除与问卷关闭/重开行为，讨论安排见[计划](../workflow/plan.md#deletion-discussion)。
+删除整份问卷的E1—E7已实现并验收，第6节为实际合同，服务见[deletion-service](../src/services/deletion-service.js)。既有题目删除与问卷关闭/重开行为保留；M6按[交付计划](../workflow/plan.md#m6)等待本轮提交后开始。
+
+<a id="survey-deletion-api"></a>
+
+## 6. 删除整份问卷
+
+| 方法/路径 | 权限及输入 | 结果 |
+| --- | --- | --- |
+| GET /surveys/:id/deletion-preview | 作者；无查询参数 | 200，data为`{id,title,revision,totalSubmissions,canDelete}`；canDelete按服务端状态及时间计算 |
+| DELETE /surveys/:id | 作者、CSRF；正文`{revision,expectedUserId,confirmation:"删除"}`；无查询参数 | 204，无正文；仅在事务提交已确认后返回 |
+
+预览允许作者查看任一自有问卷的删除资格，不修改状态或冻结字段；答卷数包含匿名与实名，每份成功答卷计一次，不返回填写者身份。预览不是提交快照，DELETE会再次验证并删除当时全部答卷，不以预览数量为删除上限。
+
+revision须为正安全整数，expectedUserId须匹配真实会话且只用于防止换账号，confirmation须精确为“删除”。未知正文/查询字段或类型错误400 INVALID_BODY/INVALID_QUERY，非法revision400 INVALID_REVISION，缺失或文字不符422 CONFIRMATION_REQUIRED；缺失confirmation按确认失败处理。未登录401 AUTH_REQUIRED，CSRF沿用公共约定，账号不符409 ACCOUNT_CHANGED；非法ID、他人或不存在资源统一404 NOT_FOUND，不泄漏所有权或删除历史。
+
+revision变化返回409 REVISION_CONFLICT，仍开放返回409 SURVEY_STILL_OPEN；这些错误均不删除任何记录。只有draft、closed，或published且服务端当前时间达到deadlineAt的问卷可删除。已有答卷不是拒绝条件。任何事务部分失败须全部回滚；数据库/提交确认异常503 TEMPORARY_UNAVAILABLE，前端提示“删除结果待确认”，不把503解释为必然失败。
+
+通用认证或预览读取故障沿用503 SERVICE_UNAVAILABLE，不意味着资源不存在；页面亦不能据此完成删除确认。
+
+重复删除已不存在的资源仍返回统一404，不声称知道其历史归属；页面仅在已验证原账号和原目标的流程中，将明确的资源不存在视为目标移除完成。网络中断后重试同一删除请求；资源仍在且revision/资格变化时重新预览确认，不能自动删除新版本。401/账号变化或普通读取故障不能当作目标不存在。
+
+删除后，填写读取/提交返回404 NOT_FOUND和“问卷不存在或已删除”，成功提交的旧requestId也不能恢复已删除数据。此为E3/E6新增边界；问卷仍存在但关闭/到期时的成功重放规则不变。未知提交结果遇到此明确资源结果终止确认；关闭/到期等其他错误仍按M4保留原请求。作者管理、统计和明细请求对不存在资源沿用统一404，前端清除不可用内容。真实验证范围见[删除用例](test-cases.md#survey-deletion-tests)。

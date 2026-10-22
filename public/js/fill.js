@@ -23,6 +23,34 @@ let authRequired = false;
 let needsReload = false;
 let succeeded = false;
 let touched = false;
+let terminal = false;
+
+// Only the actual survey resource endpoint can establish this terminal result.
+// A generic route/auth 404 must retain the usual pending-result behavior.
+async function resourceRequest(path, options) {
+  try { return await request(path, options); }
+  catch (error) {
+    if (error.status === 404 && error.code === 'NOT_FOUND' && error.requestPath === path && error.message === '问卷不存在或已删除') error.resourceMissing = true;
+    throw error;
+  }
+}
+function stopForMissingSurvey() {
+  const hadPending = Boolean(pending);
+  terminal = true;
+  pending = null;
+  authRequired = false;
+  needsReload = false;
+  $('#fill-title').textContent = '问卷不存在或已删除';
+  $('#fill-question').hidden = true;
+  $('#fill-review').hidden = true;
+  $('#fill-success').hidden = true;
+  $('#fill-load-retry').hidden = true;
+  $('#fill-policy').hidden = true;
+  $('#fill-deadline').hidden = true;
+  $('#fill-description').hidden = true;
+  $('#fill-status').textContent = '问卷不存在或已删除，已停止提交和重试。';
+  showError(`问卷不存在或已删除。${hadPending ? '无法再确认或恢复原提交结果；此前的提交可能曾经成功保存。' : '无法继续填写或提交。'}`);
+}
 
 function el(tag, text, className) {
   const node = document.createElement(tag);
@@ -84,7 +112,7 @@ function showAnswerError(message) {
   $('#fill-answer').querySelector('input, textarea')?.focus();
 }
 function updateControls() {
-  const locked = busy || authRequired || Boolean(pending) || succeeded;
+  const locked = busy || authRequired || Boolean(pending) || succeeded || terminal;
   $('#fill-question-fields').disabled = locked;
   $('#fill-login-fields').disabled = busy;
   $('#fill-anonymous-fields').disabled = locked;
@@ -92,12 +120,12 @@ function updateControls() {
   $('#fill-back').disabled = locked;
   $('#fill-submit').hidden = Boolean(pending);
   $('#fill-submit').disabled = locked || needsReload || !finalResult?.valid;
-  $('#fill-retry-submission').disabled = busy || authRequired;
+  $('#fill-retry-submission').disabled = busy || authRequired || terminal;
   $('#fill-review-list').querySelectorAll('button').forEach(button => { button.disabled = locked; });
   $('#fill-pending').hidden = !pending;
   $('#fill-reload').hidden = !needsReload || Boolean(pending) || succeeded;
   $('#fill-reload').disabled = busy || authRequired;
-  $('#fill-load-retry').disabled = busy;
+  $('#fill-load-retry').disabled = busy || terminal;
   $('#fill-auth').hidden = !authRequired;
   $('#fill-question').setAttribute('aria-busy', String(busy));
   $('#fill-review').setAttribute('aria-busy', String(busy));
@@ -212,7 +240,7 @@ function renderQuestion(focus = true) {
   if (focus) $('#fill-question-title').focus();
 }
 function goToQuestion(id) {
-  if (pending || busy || authRequired) return;
+  if (pending || busy || authRequired || terminal) return;
   captureAnswer();
   let index = visits.lastIndexOf(id, cursor);
   if (index < 0) {
@@ -269,7 +297,7 @@ function renderReview() {
   else $('#fill-review-title').focus();
 }
 function nextQuestion() {
-  if (busy || pending || authRequired || succeeded) return;
+  if (busy || pending || authRequired || succeeded || terminal) return;
   clearError();
   captureAnswer();
   touched = true;
@@ -301,10 +329,10 @@ const failureMessages = {
   ANSWER_OUTSIDE_PATH: '答卷包含最终路径之外的内容，请返回修改后再次确认。',
   INVALID_REQUEST: '提交内容不符合要求，请检查填写内容。',
   CSRF_INVALID: '会话验证未通过，请重试或恢复原账号登录。',
-  NOT_FOUND: '问卷不存在或尚未开放填写。',
+  NOT_FOUND: '问卷不存在或已删除。',
 };
 async function sendPending() {
-  if (!pending || busy || authRequired || succeeded) return;
+  if (!pending || busy || authRequired || succeeded || terminal) return;
   busy = true;
   clearError();
   $('#fill-pending-note').textContent = '正在确认提交结果，请保持本页打开。';
@@ -313,7 +341,7 @@ async function sendPending() {
   try {
     await checkIdentity();
     pending.sent = true;
-    const data = await request(`${endpoint}/submissions`, { method: 'POST', body: pending.body });
+    const data = await resourceRequest(`${endpoint}/submissions`, { method: 'POST', body: pending.body });
     if (typeof data?.submissionId !== 'string' || !data.submissionId || typeof data?.submittedAt !== 'string' || !Number.isFinite(Date.parse(data.submittedAt)) || typeof data?.replayed !== 'boolean') {
       throw new ApiError(200, 'INVALID_RESPONSE', '提交响应无法确认。');
     }
@@ -327,7 +355,9 @@ async function sendPending() {
     clearError();
     $('#fill-success').focus();
   } catch (error) {
-    if (error.status === 401 || error.code === 'ACCOUNT_CHANGED') {
+    if (error.resourceMissing) {
+      stopForMissingSurvey();
+    } else if (error.status === 401 || error.code === 'ACCOUNT_CHANGED') {
       $('#fill-pending-note').textContent = '原提交已保留。恢复原账号后，请点击“重试确认提交结果”。';
       $('#fill-status').textContent = '请恢复原账号登录后继续。';
       requireLogin();
@@ -346,7 +376,7 @@ async function sendPending() {
   } finally { busy = false; updateControls(); }
 }
 function startSubmission() {
-  if (busy || pending || authRequired || needsReload || succeeded) return;
+  if (busy || pending || authRequired || needsReload || succeeded || terminal) return;
   clearError();
   const result = recomputePath();
   if (!result.valid) { renderReview(); return; }
@@ -368,7 +398,7 @@ function startSubmission() {
   void sendPending();
 }
 async function readDefinition() {
-  const data = await request(endpoint);
+  const data = await resourceRequest(endpoint);
   if (!Array.isArray(data?.questions) || !data.questions.length || !data.settings || !['forced', 'optional', 'forbidden'].includes(data.settings.anonymityMode)) {
     throw new ApiError(200, 'INVALID_RESPONSE', '问卷内容无法读取，请重试。');
   }
@@ -388,7 +418,9 @@ async function readDefinition() {
   renderQuestion(false);
 }
 function handleLoadError(error) {
-  if (error.status === 401 || error.code === 'ACCOUNT_CHANGED') {
+  if (error.resourceMissing) {
+    stopForMissingSurvey();
+  } else if (error.status === 401 || error.code === 'ACCOUNT_CHANGED') {
     requireLogin();
     $('#fill-status').textContent = '登录后在本页继续。';
   } else {
@@ -399,7 +431,7 @@ function handleLoadError(error) {
   }
 }
 async function load() {
-  if (busy) return;
+  if (busy || terminal) return;
   if (!endpoint) {
     $('#fill-title').textContent = '无法打开问卷';
     showError('问卷链接不完整，请使用作者提供的分享链接。');
@@ -417,7 +449,7 @@ async function load() {
   finally { busy = false; updateControls(); }
 }
 async function restoreLogin(login) {
-  if (busy) return;
+  if (busy || terminal) return;
   let identityConfirmed = false;
   busy = true;
   $('#fill-login-error').hidden = true;
@@ -449,14 +481,14 @@ $('#fill-answer').addEventListener('input', () => { captureAnswer(); touched = t
 $('#fill-answer').addEventListener('change', () => { captureAnswer(); touched = true; clearError(); });
 $('#fill-answer-form').addEventListener('submit', event => { event.preventDefault(); nextQuestion(); });
 $('#fill-previous').addEventListener('click', () => {
-  if (busy || pending || authRequired || cursor === 0) return;
+  if (busy || pending || authRequired || terminal || cursor === 0) return;
   captureAnswer();
   cursor -= 1;
   clearError();
   renderQuestion();
 });
 $('#fill-back').addEventListener('click', () => {
-  if (busy || pending || authRequired) return;
+  if (busy || pending || authRequired || terminal) return;
   clearError();
   renderQuestion();
 });

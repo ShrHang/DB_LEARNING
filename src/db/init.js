@@ -1,3 +1,5 @@
+import { ObjectId } from 'mongodb';
+
 // Database schemas deliberately check storage shape, not publishing or path rules.
 const string = { bsonType: 'string' };
 const objectId = { bsonType: 'objectId' };
@@ -114,6 +116,10 @@ const definitions = {
     validator: schema({ _id: string, session: { bsonType: ['string', 'object'] }, expires: date }),
     indexes: [{ key: { expires: 1 }, name: 'expires_1', expireAfterSeconds: 0 }],
   },
+  surveyGuards: {
+    validator: schema({ _id: objectId, token: objectId, schemaVersion: integer }),
+    indexes: [],
+  },
 };
 
 // M2's exact survey validator did not allow an unfinished interval endpoint.
@@ -208,4 +214,16 @@ export async function initializeDatabase(db) {
     const indexes = missingIndexes.get(name);
     if (indexes.length) await db.collection(name).createIndexes(indexes);
   }
+
+  // Upgrade before HTTP starts. Existing tokens must never be overwritten, and
+  // runtime submit/delete paths must not upsert a deleted survey's guard.
+  let pending = [];
+  for await (const survey of db.collection('surveys').find({}, { projection: { _id: 1 } })) {
+    pending.push({ updateOne: { filter: { _id: survey._id }, update: { $setOnInsert: { token: new ObjectId(), schemaVersion: 1 } }, upsert: true } });
+    if (pending.length === 500) {
+      await db.collection('surveyGuards').bulkWrite(pending, { ordered: false });
+      pending = [];
+    }
+  }
+  if (pending.length) await db.collection('surveyGuards').bulkWrite(pending, { ordered: false });
 }

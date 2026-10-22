@@ -11,13 +11,14 @@ import { createSurveyService } from './services/survey-service.js';
 import { createFillService } from './services/fill-service.js';
 import { createSubmissionService } from './services/submission-service.js';
 import { createStatisticsService } from './services/statistics-service.js';
+import { createDeletionService } from './services/deletion-service.js';
 
 export const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const cookieName = 'questionnaire.sid';
 const token = () => randomBytes(32).toString('hex');
 const sessionAction = (req, action) => new Promise((resolve, reject) => req.session[action](error => error ? reject(error) : resolve()));
 
-export function createApp({ db, client, config, clock = { now: () => Date.now() }, logger = console, submissionHooks = {} }) {
+export function createApp({ db, client, config, clock = { now: () => Date.now() }, logger = console, submissionHooks = {}, deletionHooks = {} }) {
   if (!db || !client || !config?.sessionSecret) throw new Error('createApp 缺少数据库或会话配置');
   const app = express();
   app.disable('x-powered-by');
@@ -114,11 +115,17 @@ export function createApp({ db, client, config, clock = { now: () => Date.now() 
     res.status(204).end();
   });
   app.get('/api/surveys', requireAuth, async (req, res) => res.json({ data: await listSurveys(db, req.user.id, req.query) }));
-  const surveys = createSurveyService({ db, clock });
+  const surveys = createSurveyService({ db, client, clock });
   app.post('/api/surveys', requireAuth, requireCsrf, async (req, res) => res.status(201).json({ data: await surveys.create(req.user.id, req.body) }));
   app.get('/api/surveys/:id', requireAuth, async (req, res) => res.json({ data: await surveys.get(req.user.id, req.params.id) }));
   app.patch('/api/surveys/:id', requireAuth, requireCsrf, async (req, res) => res.json({ data: await surveys.patch(req.user.id, req.params.id, req.body) }));
   for (const action of ['publish', 'close', 'reopen']) app.post(`/api/surveys/:id/${action}`, requireAuth, requireCsrf, async (req, res) => res.json({ data: await surveys.transition(req.user.id, req.params.id, action, req.body) }));
+  const deletion = createDeletionService({ db, client, clock, hooks: deletionHooks });
+  app.get('/api/surveys/:id/deletion-preview', requireAuth, async (req, res) => res.json({ data: await deletion.preview(req.user.id, req.params.id, req.query) }));
+  app.delete('/api/surveys/:id', requireAuth, requireCsrf, async (req, res) => {
+    await deletion.remove(req.user.id, req.params.id, req.body, req.query);
+    res.status(204).end();
+  });
   const fill = createFillService({ db, clock });
   const submissions = createSubmissionService({ db, client, clock, hooks: submissionHooks });
   app.get('/api/fill/:slug', requireAuth, async (req, res) => res.json({ data: await fill.get(req.params.slug) }));

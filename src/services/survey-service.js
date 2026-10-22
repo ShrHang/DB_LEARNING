@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { AppError } from '../errors.js';
 import { createSurveyRepository } from '../repositories/surveys.js';
+import { createSurveyGuardRepository } from '../repositories/survey-guards.js';
 import { validateDefinition } from '../shared/definition.js';
 
 const missing = () => new AppError(404, 'NOT_FOUND', '问卷不存在或无权访问');
@@ -63,8 +64,9 @@ export function serializeSurvey(document) {
   };
 }
 
-export function createSurveyService({ db, clock }) {
+export function createSurveyService({ db, client, clock }) {
   const repository = createSurveyRepository(db);
+  const guards = createSurveyGuardRepository(db);
   async function own(id, ownerId) {
     if (typeof id !== 'string' || !/^[a-fA-F0-9]{24}$/.test(id)) throw missing();
     const document = await repository.findOwn(new ObjectId(id), new ObjectId(ownerId));
@@ -95,7 +97,13 @@ export function createSurveyService({ db, clock }) {
       if (Object.hasOwn(body, 'description')) document.description = body.description;
       validate(document, false);
       document.questions = normalizeQuestions(document.questions);
-      await repository.insert(document);
+      const session = client.startSession();
+      try {
+        await session.withTransaction(async () => {
+          await repository.insert(document, session);
+          await guards.insert(document._id, session);
+        }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, readPreference: 'primary', maxCommitTimeMS: 10000 });
+      } finally { await session.endSession(); }
       return serializeSurvey(document);
     },
     async get(ownerId, id) { return serializeSurvey(await own(id, ownerId)); },
