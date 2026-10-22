@@ -79,6 +79,19 @@ test('U02 规范化不静默去重或改变选项顺序，校验拒绝重复项'
   assert.deepEqual(selected, ['b', 'a']);
 });
 
+test('U02 恰好选2项：相等上下限拒绝1/3项，接受2项，空答按必答区分', () => {
+  for (const required of [false, true]) {
+    const q = { ...question('multiple_choice', { minSelections: 2, maxSelections: 2 }, required), options: options.slice(0, 3) };
+    invalid(q, ['a'], 'INVALID_VALUE');
+    valid(q, ['b', 'a']);
+    invalid(q, ['a', 'b', 'c'], 'INVALID_VALUE');
+    for (const input of [undefined, null, []]) {
+      if (required) invalid(q, input, 'REQUIRED');
+      else valid(q, input, null);
+    }
+  }
+});
+
 test('U03 文本按码点计数，组合表情不按字形计数，非空原文不trim', () => {
   const q = question('text', { minLength: 2, maxLength: 4 });
   for (const [input, expectedValid] of [

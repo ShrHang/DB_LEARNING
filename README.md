@@ -1,13 +1,15 @@
 # 问卷系统
 
-课程第一阶段项目，使用JavaScript ESM、Node.js、Express、MongoDB原生驱动和原生页面。M1—M5及[整卷永久删除](workflow/plan.md#deletion-discussion)已由用户验收，第5轮收尾待用户Git提交。[M6交付计划](workflow/plan.md#m6)已编写，待提交后开始，当前尚未执行M6或完成阶段报告。
+使用 JavaScript、Node.js、Express 和 MongoDB 构建的问卷系统，提供原生 HTML/CSS/JavaScript 页面。
 
-## 环境
+支持注册登录、问卷编辑与发布、分享填写、条件跳转、答案校验、匿名提交、统计与答卷明细，以及问卷永久删除。
 
-- Node.js 22.9+、npm；本轮实际使用 Node.js 26.12.0、npm 12.2.1。
-- 本机安装 `mongod`；本轮实际使用 MongoDB 8.3.9。`mongosh` 仅用于人工排查，本轮版本 2.13.0。
-- 项目独立 MongoDB：`127.0.0.1:27018`，副本集 `questionnaire-rs`，数据与日志在 `local/mongodb/`。启停脚本核对数据路径、端口和副本集名称，不操作其他实例。现有 27017 实例无需调整。
-- 直接依赖精确锁定在 [package.json](package.json)，完整依赖树在 [package-lock.json](package-lock.json)。
+## 环境要求
+
+- Node.js 22.9+、npm。
+- 本机安装 MongoDB（`mongod`），使用支持事务的副本集。
+- 默认项目实例为 `127.0.0.1:27018`，副本集名 `questionnaire-rs`，数据保存在 `local/mongodb/`。
+- 浏览器自动测试需要本机存在 Chromium。
 
 ## 安装和运行
 
@@ -22,53 +24,50 @@ npm run db:init
 npm start
 ```
 
-打开 [本机页面](http://127.0.0.1:3000)，注册后登录，进入个人问卷列表。新账号列表为空；点击“创建问卷”，显式选择匿名策略后创建草稿，随后添加题目、选项、校验和跳转规则。保存草稿或补全后发布，可关闭/重开。发布后复制分享链接，填写者可在链接页面登录，逐题作答、回退修改，确认匿名方式后提交。到达结束页仍需确认提交；遇到登录过期可在原页恢复原账号，提交结果未知时使用原请求重试确认。刷新或关闭填写页会丢失未提交进度。作者可从个人列表或编辑器点击“统计与答卷”，查看整卷/单题统计、分页回答和完整答卷；匿名条目隐藏账号关联，实名显示用户名，关闭/到期后仍可查看。注册不自动登录；用户名区分大小写，密码中的空格原样保留。
+打开 [http://127.0.0.1:3000](http://127.0.0.1:3000)，注册后登录。`cp` 仅在首次配置时执行，避免覆盖已有配置。
 
-`cp` 只在首次配置时执行，避免覆盖已有 `.env`。`.env`、`node_modules/`、`local/` 均不纳入 Git。本轮已在本地生成 `.env`，密钥不写入共享文档。
+配置模板见 [.env.example](.env.example)：
 
-第5轮升级时先停止旧应用，再启动新版`npm start`；启动初始化会增加内部surveyGuards集合并为现有问卷幂等补建协调记录，不清除原问卷或答卷。不要让未接入协调的旧应用同时处理请求。
+| 配置 | 含义 |
+| --- | --- |
+| `HOST` / `PORT` | HTTP 监听地址与端口，默认 `127.0.0.1:3000` |
+| `MONGODB_URI` / `MONGODB_DB` | 副本集连接地址与业务数据库名 |
+| `SESSION_SECRET` | 至少 32 个字符的随机会话密钥 |
+| `COOKIE_SECURE` | 本机 HTTP 使用 `false`；HTTPS 使用 `true` |
 
-删除入口位于个人问卷列表：草稿、已关闭或已到期的自有问卷可删除，仍开放的问卷须先关闭。确认框展示标题及答卷数，必须输入“删除”再点击“永久删除”；问卷及全部关联答卷永久移除，无法恢复。网络中断时保留“删除结果待确认”，使用“重试确认”。原分享链接及已打开填写页再次提交时提示问卷不存在或已删除。
+应用启动时检查配置、副本集和数据库结构，初始化可重复执行。配置、端口或数据库结构不兼容时会报错，不会清空数据。
 
-配置项见 [.env.example](.env.example)：HOST/PORT 为 HTTP 地址，MONGODB_URI/MONGODB_DB 为业务连接，SESSION_SECRET 至少 32 个字符，COOKIE_SECURE 本机 HTTP 使用 false。会话固定 24 小时，无访问续期；Cookie 为 HttpOnly、SameSite=Lax。若以后使用 HTTPS，再配置 Secure=true。
+按 Ctrl+C 停止应用；`npm run dev` 支持开发时自动重启。`npm run db:status` 查看项目数据库状态，`npm run db:stop` 停止项目实例。数据库脚本核对端口、副本集名和数据路径，不操作其他实例；日志位于 `local/mongodb/mongod.log`。
 
-## 停止和排查
+## 使用方式
 
-- 在运行 `npm start` 的终端按 Ctrl+C，应用停止接收请求并关闭连接；`npm run dev` 支持开发时重启。
-- `npm run db:status` 核查项目实例和可写主节点；`npm run db:stop` 关闭本项目 MongoDB，不删除数据。应用与数据库分别启停。
-- 再次 `npm run db:start` 可恢复已有项目实例/数据；初始化可重复运行，启动应用也会检查并补建缺失集合/索引。
-- 缺少密钥、数据库连接失败、非副本集、端口占用或不兼容 validator/索引都会报错，不回退到内存、不清库。数据库日志在 `local/mongodb/mongod.log`。
-- 27018 被其他服务占用时应先排查；脚本拒绝操作未通过归属检查的实例。初始化只自动兼容已交付 M2 的精确 surveys 校验器：允许草稿数字区间使用 null 占位；不重写数据，其余不兼容结构仍报错。自定义过的校验器不会被覆盖。
+1. 在个人列表创建问卷，设置匿名策略，添加单选、多选、文本或数字题，配置校验和跳转规则。
+2. 保存草稿，补全后发布并复制分享链接。发布后匿名和重复填写策略固定；首份答卷成功后题目定义冻结，标题、说明和截止时间仍可调整。
+3. 填写者登录后逐题作答，可返回修改、按规则回跳，到达结束页后确认提交。未提交内容只保留在当前页面，刷新或关闭会丢失。
+4. 作者在“统计与答卷”查看整卷、单题统计及分页明细。匿名答卷隐藏账号关联；实名答卷显示用户名。
+5. 草稿、已关闭或已到期的问卷可永久删除。确认框中输入“删除”并点击“永久删除”，问卷及全部答卷一并移除，无法恢复。
+
+登录固定 24 小时有效，访问不续期；填写中到期可在原页重新登录原账号。提交或删除结果未知时使用页面提供的重试确认。
 
 ## 测试
 
-先启动项目副本集：
+先启动项目副本集，再执行：
 
 ```bash
-npm run test:unit
-npm run test:integration
-# 或运行上述两组
-npm test
+npm test                  # 单元与真实数据库/HTTP 集成测试
+npm run test:unit         # 仅单元测试
+npm run test:integration  # 仅集成测试
+npm run test:browser      # 真实 Chromium 页面测试
 ```
 
-测试通过 `TEST_MONGODB_URI` 可指定其他可写副本集；不会采用 `.env` 中的业务数据库名。每套创建唯一的 `questionnaire_test_<随机值>` 数据库，结束仅清理自己创建的库。集成测试使用真实 MongoDB 和 HTTP Cookie agent，不需要另开 `npm start`。
+可通过 `TEST_MONGODB_URI` 指定其他可写副本集，通过 `CHROMIUM_BIN` 指定 Chromium 路径。测试使用独占的随机 `questionnaire_test_*` 数据库，仅清理本次创建的资源。
 
-可选的真实浏览器检查需要本机 Chromium，无额外 npm 浏览器框架：
+验证结果：**72 项单元、100 项集成、25 项浏览器测试通过**。环境、具体用例及未覆盖范围见 [测试说明](docs/test-cases.md#results)。
 
-```bash
-npm run test:browser
-# 非默认浏览器路径时
-CHROMIUM_BIN=/path/to/chromium npm run test:browser
-```
+## 文档与目录
 
-该命令启动临时应用、测试库与独立浏览器目录，验证账号/列表、四题型编辑、草稿规则、发布/关闭/重开、冲突输入保留、分享填写/回跳/最终分支、原账号恢复、结果未知重试、统计/作者明细及360px页面；完成后关闭并清理。仅这个临时无界面浏览器使用 `--no-sandbox`，不更改日常浏览器配置。业务时钟可注入，测试可在不等待一天的情况下验证 24 小时边界。
+- [功能与业务规则](docs/requirements.md)、[系统与关键逻辑](docs/design.md)、[数据库设计](docs/database.md)、[API](docs/api.md)、[测试说明](docs/test-cases.md)。
+- `src/`：后端及共享规则；`public/`：页面；`scripts/`：数据库管理；`tests/`：自动测试。
+- [文档索引](docs/README.md)、[开发交付索引](workflow/plan.md)、[AI 协作记录](workflow/ai-log.md)。
 
-最新全量回归：71单元、100集成、25真实浏览器测试通过（第5轮删除功能），见[实际证据](docs/test-cases.md#survey-deletion-results)。覆盖删除资格/权限、全部答卷清理、真实事务竞争与回滚、原受理语义、未知结果确认及旧页面清理；原M2—M5功能回归通过。第4轮统计证据保留在[原记录](docs/test-cases.md#15-m5-实际执行记录)。[删除用户验收](docs/test-cases.md#survey-deletion-acceptance)已完成；本次文档收尾不算复测，M6回归与报告仍待本轮提交后执行。
-
-## 文档
-
-- [需求与决策](docs/requirements.md)、[数据库设计](docs/database.md)、[后端设计](docs/design.md)、[API 合同](docs/api.md)。
-- [开发计划与状态](workflow/plan.md)、[按轮次记录的 AI 日志](workflow/ai-log.md)、[协作约定](AGENTS.md)。
-- [文档职责](docs/README.md)。
-
-轮次由用户控制，Git 由用户提交；第二阶段将在已有结构和数据上增量扩展。
+`.env`、`local/`、`node_modules/`、`coverage/` 和本机代理配置不纳入 Git。
