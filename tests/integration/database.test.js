@@ -91,10 +91,10 @@ describe('MongoDB initialization and storage constraints', () => {
     if (resource) await resource.cleanup();
   });
 
-  it('creates the five validators and all agreed index options', async () => {
+  it('creates the ten validators and all agreed index options', async () => {
     const { db } = resource;
     const collections = await db.listCollections().toArray();
-    assert.deepEqual(collections.map(({ name }) => name).sort(), ['sessions', 'submissions', 'surveyGuards', 'surveys', 'users']);
+    assert.deepEqual(collections.map(({ name }) => name).sort(), ['questionBankItems', 'questionBanks', 'questionShares', 'questionVersions', 'questions', 'sessions', 'submissions', 'surveyGuards', 'surveys', 'users']);
     for (const info of collections) {
       assert.equal(info.options.validator.$jsonSchema.bsonType, 'object');
       assert.equal(info.options.validationLevel, 'strict');
@@ -103,6 +103,7 @@ describe('MongoDB initialization and storage constraints', () => {
     const expected = {
       users: [['username_1', { username: 1 }, { unique: true }]],
       surveys: [
+        ['survey_version', { ownerId: 1, 'questions.reference.versionId': 1 }, {}],
         ['slug_1', { slug: 1 }, { unique: true }],
         ['ownerId_1_createdAt_-1__id_-1', { ownerId: 1, createdAt: -1, _id: -1 }, {}],
       ],

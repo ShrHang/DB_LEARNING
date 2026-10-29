@@ -78,7 +78,7 @@ export function createSubmissionService({ db, client, clock, hooks = {} }) {
           await hooks.afterGuard?.(context);
           const previous = replayExisting(await submissions.findRequest(current._id, respondentId, request.requestId, session));
           if (previous) return previous;
-          if (!current.contentLocked) {
+          if (!current.firstSubmittedAt) {
             const locked = await surveys.freeze(current, acceptedAt, session);
             if (!locked.matchedCount) throw new AppError(409, 'DEFINITION_CHANGED', '题目已更新，请重新载入填写');
             await hooks.afterFreeze?.(context);

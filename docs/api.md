@@ -44,9 +44,16 @@
 
 settings 包含 anonymityMode（forced/optional/forbidden）和 allowMultipleSubmissions（默认 false）；deadlineAt 默认为 null，表示不设截止；questions 默认为空数组。
 
-questions 采用完整数组提交以支持新增、删除和重排，现有题目/选项的 ID 保持不变；结构见数据库文档。草稿允许未选条件、null 条件值/目标和区间单边 null；空操作符入库前规范为缺省。发布及首次发布后的编辑要求完整合法。题目实质变化才递增 definitionRevision，单纯元信息/原样 questions 仅递增 revision。
+questions 采用完整数组提交以支持新增、删除和重排，现有题目/选项的 ID 保持不变；结构见数据库文档。草稿允许未选条件、null 条件值/目标和区间单边 null；空操作符入库前规范为缺省。发布要求完整合法，之后禁止改题。题目实质变化才递增 definitionRevision，单纯元信息/原样 questions 仅递增 revision。
 
-首次发布后填写策略冻结，首份答卷成功后题目定义冻结；标题、说明和截止仍可修改。status、ownerId、contentLocked、firstPublishedAt 等由服务端管理，不能通过 PATCH 覆盖。状态操作仅支持 draft→published、published→closed、closed→published；重开时截止须未到或为 null，否则返回 409 DEADLINE_PASSED。
+首次发布后填写策略与题目定义均冻结；标题、说明和截止仍可修改。status、ownerId、contentLocked、firstPublishedAt 等由服务端管理，不能通过 PATCH 覆盖。状态操作仅支持 draft→published、published→closed、closed→published；重开时截止须未到或为 null，否则返回 409 DEADLINE_PASSED。
+
+### 3.1 问卷引用、导出与复制
+
+POST/PATCH 问卷中题目可使用 `{id,reference:{questionId,versionId},required,rules}`，服务端补齐版本内容；若同时传 type/title/options/validation，必须与版本一致，否则422 CONTENT_MISMATCH。相同版本重复422 DUPLICATE_VERSION，已关联实例直接删除 reference 返回422 REFERENCE_REQUIRED。更换引用须重新授权；保留同一实例的相同引用不重新要求授权。完整返回仍包含物化内容及 reference；填写接口剥离 reference，提交请求格式与摘要不变。
+
+- `POST /surveys/:id/questions/:questionId/save`，正文 `{revision}`，201 `{question,version}`。草稿原子建立引用并递增 definitionRevision/revision；发布后仅导出，不改变原问卷。
+- `POST /surveys/:id/clone`，正文 `{revision}`，201 新问卷管理定义。复制配置与题目，重映射实例和跳转，清空截止时间，不复制答卷。有不可用引用返回409 QUESTION_UNAVAILABLE，details 列明题目及原因，全部回滚。
 
 ## 4. 填写与提交
 
@@ -89,7 +96,7 @@ POST 顶层五个字段均须提供；requestId 为 UUID（统一为小写），
 {"data":{"submissionId":"000000000000000000000002","submittedAt":"2026-10-22T08:00:00.000Z","replayed":false}}
 ```
 
-唯一冲突及并发业务拒绝后先在事务外查询同请求成功结果，再区分幂等冲突和次数限制。新增提交在每次事务尝试读取问卷后，按服务端时间重新检查状态、截止和定义版本；预先打开页面不构成受理。已受理的后续提交可在关闭后完成，冲突重试须重新受理；首份冻结和插入在同一事务完成，提交确认后才返回 201。
+唯一冲突及并发业务拒绝后先在事务外查询同请求成功结果，再区分幂等冲突和次数限制。新增提交在每次事务尝试读取问卷后，按服务端时间重新检查状态、截止和定义版本；预先打开页面不构成受理。已受理的后续提交可在关闭后完成，冲突重试须重新受理；首次提交时间和首份答卷插入在同一事务完成，提交确认后才返回 201。
 
 未知数据库/事务异常及提交确认失败返回 503 TEMPORARY_UNAVAILABLE，不能据此判断是否保存。客户端冻结原请求标识和负载，提示“提交结果待确认，请重试确认”。结果未知后，后续关闭/截止等错误不能证明原在途事务失败，仍保留原请求继续确认；明确的资源不存在按[整卷删除规则](#survey-deletion-api)处理。401/ACCOUNT_CHANGED 时保持原请求并同页恢复原账号，不能将答卷接管给新账号。
 
@@ -123,6 +130,18 @@ POST 顶层五个字段均须提供；requestId 为 UUID（统一为小写），
 
 分页默认 20、limit 范围 1—100；cursor 为 base64url JSON，严格仅含 `{surveyId,questionId,submittedAt,id}`。questionId=null 表示答卷列表，否则为指定题目；submittedAt 是规范 ISO 日期，id 为答卷 ObjectId。游标与当前资源不匹配返回 400，不能改变授权或携带用户身份。取 limit+1 并以 submittedAt/_id 降序翻页，末页 nextCursor=null；逐题列表只含该题非空有效回答。
 
+### 5.3 跨问卷统计
+
+以下路径均为 `/questions/:id/versions/:versionId/...`。权限来自当前可访问题目，或当前用户问卷中对该具体版本的已有引用；始终只聚合自己的问卷，撤销共享不取消已有引用的统计能力，不开放其他版本历史。
+
+| GET 后缀 | 查询与输出 |
+| --- | --- |
+| statistics | 无查询；`{questionId,versionId,number,type,title,answeredCount,options?,average?}`；选择题 options 为 `{id,label,count,percentage}` |
+| answers | cursor/limit；条目 `{submissionId,submittedAt,anonymous,respondent,value,survey:{id,title,questionId}}`，按 submittedAt/_id 降序 |
+| frequencies | 仅数字题；cursor/limit；条目 `{value,count}`，按 value 升序 |
+
+answeredCount 仅计最终有效非空回答，不去重用户，不混合版本或另存题。零分母比例、无数值均值为 null。回答游标 position 为 `{submittedAt,id}`；频次游标 position 为数值，绑定用户、题目、版本和类型。匿名 respondent=null，实名只含 username；均不返回内部账号、请求标识或哈希。多次分页不承诺同一快照。
+
 ## 6. 错误与处理
 
 | HTTP / code | 场景与页面行为 |
@@ -136,11 +155,13 @@ POST 顶层五个字段均须提供；requestId 为 UUID（统一为小写），
 | 409 ACCOUNT_CHANGED | 当前账号与 expectedUserId 不同，提示恢复原账号 |
 | 409 REVISION_CONFLICT | 管理页 revision 过期，保留未保存编辑并提示重新加载/合并 |
 | 409 DEFINITION_CHANGED | 填写页题目定义过期，提示重新载入填写 |
-| 409 CONTENT_LOCKED / SETTINGS_LOCKED | 首份答卷后改题目，或首次发布后改填写策略 |
+| 409 CONTENT_LOCKED / SETTINGS_LOCKED | 首次发布后改题目或填写策略 |
 | 409 INVALID_STATUS / DEADLINE_PASSED | 状态不允许该操作，或重开时截止已到 |
 | 409 SURVEY_NOT_OPEN | 已关闭或已到截止；此前打开页面不构成受理 |
 | 409 ALREADY_SUBMITTED | 当前账号已用完一次提交机会 |
 | 409 IDEMPOTENCY_CONFLICT | 同提交标识对应不同内容 |
+| 409 QUESTION_ARCHIVED / QUESTION_UNAVAILABLE / ALREADY_LINKED | 题目已归档、复制包含不可用题目，或临时题已关联独立版本 |
+| 422 CONTENT_MISMATCH / DUPLICATE_VERSION / REFERENCE_REQUIRED / OPTION_ID_REUSED | 引用内容不符、同版本重复、直接解除来源或新增选项复用历史ID |
 | 409 SURVEY_STILL_OPEN | 问卷仍开放，不能永久删除 |
 | 413 BODY_TOO_LARGE / 415 UNSUPPORTED_ENCODING | 请求正文过大，或字符集/内容编码不受支持 |
 | 422 VALIDATION_FAILED / ANSWER_INVALID | 发布定义或答案不合法，details 定位字段/题目 |
@@ -171,3 +192,33 @@ revision变化返回409 REVISION_CONFLICT，仍开放返回409 SURVEY_STILL_OPEN
 重复删除已不存在的资源仍返回统一404，不声称知道其历史归属；页面仅在已验证原账号和原目标的流程中，将明确的资源不存在视为目标移除完成。网络中断后重试同一删除请求；资源仍在且revision/资格变化时重新预览确认，不能自动删除新版本。401/账号变化或普通读取故障不能当作目标不存在。
 
 删除后，填写读取/提交返回 404 NOT_FOUND 和“问卷不存在或已删除”，成功提交的原 requestId 也不能恢复已删除数据。问卷仍存在但关闭/到期时，成功重放规则继续适用。未知提交结果遇到明确的资源不存在时终止确认；关闭/到期等其他错误仍保留原请求。作者管理、统计和明细对不存在资源返回统一 404，前端清除不可用内容。
+
+## 8. 独立题目与题库接口
+
+本节均需登录，写操作还需 CSRF 且不接受查询参数。资源越权统一 404；管理 revision 为正安全整数，过时 409 REVISION_CONFLICT。列表默认 20、最大 100，采用 `{items,nextCursor}`；游标为 base64url `{scope,position}`，绑定用户及资源/查询类型，不作为授权。题目、题库、授权、使用列表按 ObjectId 降序；版本列表按 number 降序。
+
+content 为 `{type,title,options?,validation}`，不接受 required/rules/id 等局部配置。版本输出 `{id,questionId,number,parentVersionId,sourceVersionId,operation,content,createdAt,source?}`。source 仅在有权访问来源时含 `{questionId,versionId,number,title}`，否则为 null。题目详情为 `{id,owned,archived,revision,latestNumber,latest,createdAt,updatedAt}`，owned 为当前用户是否所有者。
+
+| 方法/路径（省略 /api） | 输入 | 输出/行为 |
+| --- | --- | --- |
+| GET /questions | scope=own/shared，archived=true/false，cursor/limit | 可访问题目分页，默认自己的未归档题 |
+| POST /questions | `{content}` | 201 `{question,version}`，首版 number=1 |
+| GET /questions/:id | 无查询 | 自有或有效共享题详情 |
+| GET /questions/:id/versions | cursor/limit | 不可变版本分页 |
+| GET /questions/:id/versions/:versionId | 无查询 | 单个版本，须属于该题且有题目权限 |
+| POST /questions/:id/versions | `{revision,parentVersionId,operation,content?}` | 200 `{version,unchanged}`；operation=edit/restore，恢复禁止传 content；仅所有者 |
+| POST /questions/:id/fork | `{versionId}` | 201 `{question,version}`；记录来源，自己拥有新题 |
+| GET /questions/:id/shares | cursor/limit | 仅所有者，`{id,username,createdAt}` 分页 |
+| POST /questions/:id/shares | `{revision,username}` | 200 `{revision}`；重复授权不创建重复行，用户名区分大小写 |
+| DELETE /questions/:id/shares/:shareId | `{revision}` | 200 `{revision}`，撤销指定授权 |
+| POST /questions/:id/archive 或 restore | `{revision}` | 200 `{id,archived,revision}`，仅所有者 |
+| GET /questions/:id/usage | cursor/limit | 仅自己的引用问卷 `{id,title,status,versions:[{questionId,versionId}]}`；已有引用不要求原授权仍有效 |
+| GET /question-banks | cursor/limit | 自己的 `{id,name,revision,createdAt}` 分页 |
+| POST /question-banks | `{name}` | 201，名称去两端空白后非空，输入不超过100码点 |
+| PATCH /question-banks/:id | `{revision,name}` | 200，重命名后的题库 |
+| DELETE /question-banks/:id | `{revision}` | 204，仅删除分类和收录关系 |
+| GET /question-banks/:id/items | cursor/limit | `{bank,items,nextCursor}`；条目 `{id,questionId,question,available}`，授权失效时 question=null |
+| POST /question-banks/:id/items | `{revision,questionId}` | 200 `{revision}`，允许重复收录请求但不创建重复关系 |
+| DELETE /question-banks/:id/items/:questionId | `{revision}` | 200 `{revision}`，移出分类 |
+
+归档题可浏览但不能新增使用、另存或授权，返回409 QUESTION_ARCHIVED。无变化编辑返回原父版本及 unchanged=true，不增加修订号；恢复总是创建新版。新增选项不能复用父版以外的历史选项 ID，返回422 OPTION_ID_REUSED。

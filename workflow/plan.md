@@ -1,78 +1,39 @@
-# 开发交付索引
+# 问卷系统开发计划
 
-状态：用户已确认 M6 验收通过，M1—M6 及整卷删除均已验收。第6轮收尾就绪，待用户 Git 提交；项目报告由用户完成最终整理，不纳入 AI 待办。源码与公开文档已按当前系统整理，历史过程由 Git 和各轮日志追溯。
+课程第二阶段、第7轮「题目复用、版本管理与跨问卷统计」已由用户确认验收通过，本轮收尾完成，待用户自行提交Git。报告正文由用户撰写，不再列为AI待办；本次收尾后停止追加日志，除非用户重新明确要求。业务规则和技术合同以 [docs](../docs/README.md) 为准，计划只维护交付状态和待办。
 
-## 1. 成果与验收
-
-| 里程碑 | 已验收成果 | 文件索引 |
-| --- | --- | --- |
-| M1 需求与架构 | 功能规则、数据模型、系统/API/测试设计 | [业务规则](../docs/requirements.md)、[系统设计](../docs/design.md)、[协作规范](../AGENTS.md) |
-| M2 基础与账号 | 应用入口、数据库初始化、账号与固定会话、个人列表 | [成果](#m2) |
-| M3 问卷管理 | 草稿、四题型、校验/规则编辑、发布、关闭与重开 | [成果](#m3) |
-| M4 填写与提交 | 分享填写、回跳、最终路径、匿名、幂等与事务 | [成果](#m4) |
-| M5 统计与答卷 | 整卷/单题统计、分页明细及匿名保护 | [成果](#m5) |
-| 整卷删除 | 永久删除、精确确认、在途提交协调和页面清理 | [成果](#deletion-discussion) |
-| M6 交付核查 | 运行复现、完整回归、公开文档整理及本地报告初稿 | [成果](#m6) |
+## 1. 前期交付索引
 
 <a id="m2"></a>
-
-## 2. 基础与账号
-
-[应用](../src/app.js)、[启动](../src/server.js)、[配置](../src/config.js)、[数据库初始化](../src/db/init.js)、[本机数据库脚本](../scripts/mongo-local.js)、[账号服务](../src/services/auth-service.js)、[账号测试](../tests/integration/auth.test.js)。
-
-独立副本集、固定 24 小时会话、CSRF、大小写敏感账号、退出登录和个人列表隔离已实现并验收。
-
 <a id="m3"></a>
-
-## 3. 问卷管理
-
-[管理服务](../src/services/survey-service.js)、[定义校验](../src/shared/definition.js)、[编辑器](../public/editor.html)、[管理测试](../tests/integration/surveys.test.js)。
-
-草稿与完整校验、稳定 ID、定义/管理修订号、发布后填写策略冻结、首份后题目冻结和生命周期操作已实现并验收。
-
 <a id="m4"></a>
-
-## 4. 填写与提交
-
-[填写页](../public/fill.html)、[答案校验](../src/shared/answers.js)、[跳转](../src/shared/rules.js)、[最终路径](../src/shared/path.js)、[提交服务](../src/services/submission-service.js)、[并发测试](../tests/integration/concurrency.test.js)。
-
-页面缓存与实际导航、无限次交互回跳、有效分支筛选、原账号恢复、幂等重试、首份事务和关闭受理边界已实现并验收。
-
 <a id="m5"></a>
-
-## 5. 统计与答卷
-
-[统计服务](../src/services/statistics-service.js)、[聚合仓储](../src/repositories/statistics.js)、[序列化](../src/serializers/submissions.js)、[统计页面](../public/statistics.html)、[统计测试](../tests/integration/statistics.test.js)、[权限与分页](../tests/integration/statistics-access.test.js)。
-
-有效回答分母、数值平均、零/空值、分页、匿名输出和页面迟到响应处理已实现并验收。
-
 <a id="deletion-discussion"></a>
-
-## 6. 整卷删除
-
-[业务规则](../docs/requirements.md#survey-deletion-requirements)、[数据库协调](../docs/database.md#survey-deletion-data)、[关键逻辑](../docs/design.md#survey-deletion-design)、[接口](../docs/api.md#survey-deletion-api)、[删除服务](../src/services/deletion-service.js)、[集成测试](../tests/integration/deletion.test.js)、[页面测试](../tests/browser/deletion.test.js)。
-
-草稿/关闭/到期资格、输入“删除”确认、问卷/答卷/guard 原子清理、事务竞争与回滚、结果未知确认及资源失效处理已实现并验收。
-
 <a id="m6"></a>
 
-## 7. 交付与最终收尾
+第一阶段 M1—M6 及整卷删除已获用户验收，由用户提交 `9cc7e2c`（`r6:Phase 1 completed`）。账号、问卷管理、填写提交、统计与删除作为第二阶段基线继续保留。详细安排、历次测试和收尾过程见 Git 及 [第1—6轮日志](ai-log.md)，不在当前计划中重复。
 
-- [x] 已核对 `local/Phase 1.pdf` 第七节（PDF 第7—8页）：可运行代码/schema/配置、系统与设计文档、测试步骤/输入/输出/结果、报告九项内容均有对应材料。
-- [x] 真实回归：72 单元、100 集成、25 Chromium 测试通过；环境及范围见 [测试结果](../docs/test-cases.md#results)。
-- [x] 干净副本按锁文件离线安装 110 包，隔离库中完成真实 CLI/HTTP 启停、重复初始化、重启保留会话/数据/幂等及关闭删除验证。
-- [x] 报告初稿已存 `local/report-phase-1.md`，被 Git 忽略；用户负责最终收尾。
-- [x] 用户明确确认 M6 验收，README/docs 已精简为当前系统说明，AI 日志以本次交互为最后一条记录。
-- [ ] 用户进行最终 Git 提交；后续报告整理及 GitHub 发布由用户处理，未由 AI 代为执行。
+## 2. 第二阶段交付与验收
 
-报告初稿覆盖项目目标、系统设计、MongoDB 设计、跳转设计、校验设计、AI 使用、测试结果、问题及解决方式。本地初稿不纳入 Git，最终报告由用户自行准备。
+| 工作项 | 目标与任务 | 交付 | 验收标准 | 状态 |
+| --- | --- | --- | --- | --- |
+| 需求与设计 | 确定复用、版本、共享、分类和兼容边界 | [需求](../docs/requirements.md)、[数据库](../docs/database.md)、[系统设计](../docs/design.md)、[API](../docs/api.md) | 文档与实现一致，旧功能及数据保留 | 已验收 |
+| 独立题目 | 完整题目保存、不可变版本、分支/恢复、另存、共享与归档 | [题目服务](../src/services/question-service.js)、[数据库初始化](../src/db/init.js) | 历史不覆盖，并发序号唯一，撤销/归档阻止新增使用 | 已验收，自动验证通过 |
+| 问卷与题库 | 多分类、选题/换版、旧题保存、发布冻结、整卷复制 | [问卷服务](../src/services/survey-service.js)、[分类服务](../src/services/bank-service.js)、[题库页面](../public/questions.html)、[编辑器](../public/editor.html) | 关联原子保存，失效跳转阻止发布，已有引用不受撤销破坏 | 已验收，自动验证通过 |
+| 跨问卷统计 | 按版本汇总自有问卷，提供频次、明细和版本对比 | [统计服务](../src/services/question-statistics-service.js)、[页面交互](../public/js/questions.js) | 不混合版本/另存题，不泄漏他人数据，零值和分页正确 | 已验收，自动验证通过 |
+| 升级与回归 | 识别旧结构，保留会话、答案、摘要和提交协议 | [集成测试](../tests/integration/questions.test.js)、[测试说明](../docs/test-cases.md#results) | 重复初始化安全，旧请求可重放，原业务回归通过 | 已验收；隔离库验证，开发库未迁移 |
+| 交付材料 | 运行说明、实际测试证据、AI日志、本地报告初稿 | [README](../README.md)、[测试说明](../docs/test-cases.md)、[第7轮日志](logs/r7.log) | 内容可追溯，明确未测范围；报告正文由用户完成 | 已验收，初稿已交接 |
 
-实际执行日期为 2026-10-22。运行复现只使用本次随机测试库和临时应用；测试资源已清理，开发库只读核对前后计数相同。本次最终文档整理未重跑程序测试，不将静态检查记作新的测试结果。
+报告初稿位于 `local/report-phase-2.md`，不纳入 Git，也不作为共享文档的交付引用；用户后续撰写报告正文并定稿。
 
-验证限制保留在 [测试说明](../docs/test-cases.md#results)：大规模删除压力、其他浏览器/平台、全部 Node 版本、真实 BFCache 及特定浏览器故障分支未完整验证，未做依赖安全扫描。
+## 3. 当前验证与待办
 
-## 8. 过程记录
+2026-10-29 已执行 `npm test`（74项单元、117项真实数据库/HTTP集成）与 `npm run test:browser`（33项Chromium测试），均无失败、取消或跳过。桌面1280px与窄屏360px页面已渲染检查。环境、用例及限制统一见 [测试说明](../docs/test-cases.md#results)，本计划不另存一份测试细节。
 
-[AI 日志索引](ai-log.md)保留六轮真实交互及各次改动；M6 执行基线为用户第5轮提交 `f9f33c9`。测试与修正的详细过程见 [第6轮日志](logs/r6.log)，更早结果以相应日志和 Git 为准。
+- 用户已明确确认第7轮验收通过；未据此增加人工测试范围或新的验证结果。
+- 开发库未执行本次迁移。实际升级须先停止旧应用，再初始化并启动新应用。
+- 大规模数据/压力、其他浏览器和平台、全部Node版本、依赖扫描及真实BFCache全面验证未完成；本次未重跑干净副本安装。这些范围继续保留，未标为已验证。
+- 第7轮收尾完成，Git提交和报告正文由用户后续完成；没有代为提交或宣称报告已定稿。
+- 本次为本轮最后一条日志，之后不再追加或新建日志，除非用户重新明确要求。
 
-当前无后续里程碑实施计划。课程第二阶段未读取或实施；后续新工作需用户另行明确。
+建议提交说明：`feat: 第7轮完成Phase 2题库、版本共享与跨问卷统计`。

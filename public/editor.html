@@ -9,13 +9,13 @@
 </head>
 <body>
   <a class="skip-link" href="#main">跳到主要内容</a>
-  <header class="site-header"><a class="brand" href="/">问卷系统</a><nav aria-label="作者导航"><a href="/surveys.html">我的问卷</a><a href="/login.html" target="_blank" rel="noopener">在新标签页登录</a></nav></header>
+  <header class="site-header"><a class="brand" href="/">问卷系统</a><nav aria-label="作者导航"><a href="/surveys.html">我的问卷</a><a href="/questions.html">题目与题库</a><a href="/login.html" target="_blank" rel="noopener">在新标签页登录</a></nav></header>
   <main id="main" class="workspace editor-workspace">
     <div class="page-heading"><div><p class="eyebrow">作者工作台</p><h1 id="editor-heading">创建问卷</h1></div><span id="survey-status" class="badge">新草稿</span></div>
     <p id="editor-status" class="hint" role="status" aria-live="polite">请选择匿名策略后创建草稿。</p>
     <div id="editor-error" class="notice error" role="alert" tabindex="-1" hidden></div>
     <p id="save-state" class="save-state" role="status" aria-live="polite">尚未创建</p>
-    <div class="toolbar"><button id="reload-button" type="button" class="secondary" hidden>重新加载服务器版本</button><a id="statistics-link" class="button secondary" hidden>统计与答卷</a></div>
+    <div class="toolbar"><button id="reload-button" type="button" class="secondary" hidden>重新加载服务器版本</button><button id="clone-survey" type="button" class="secondary" hidden>复制为新草稿</button><div id="export-questions" class="toolbar"></div><a id="statistics-link" class="button secondary" hidden>统计与答卷</a></div>
     <form id="editor-form">
       <fieldset id="editor-fields" class="editor-fields" disabled>
         <section class="panel editor-section" aria-labelledby="basic-heading">
@@ -33,10 +33,10 @@
         </fieldset>
         <section id="questions-section" class="panel editor-section" aria-labelledby="questions-heading" hidden>
           <h2 id="questions-heading">题目与跳转</h2>
-          <p id="content-note" class="hint">收到首份答卷后题目定义永久冻结。规则按顺序匹配，首条命中即跳转；未命中时进入下一题，最后一题默认结束。空答不匹配规则，允许回跳、自跳及循环。</p>
+          <p id="content-note" class="hint">首次发布后题目定义永久冻结。规则按顺序匹配，首条命中即跳转；未命中时进入下一题，最后一题默认结束。空答不匹配规则，允许回跳、自跳及循环。</p>
           <fieldset id="question-fields" class="editor-fields" data-field="questions">
             <div id="question-list"></div>
-            <button id="add-question" type="button" class="secondary">添加题目</button>
+            <button id="pick-question" type="button" class="secondary">从题库选题</button><button id="add-question" type="button" class="secondary">添加题目</button>
           </fieldset>
         </section>
         <div class="editor-footer panel">

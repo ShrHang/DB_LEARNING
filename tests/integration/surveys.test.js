@@ -87,22 +87,22 @@ describe('M3 survey management', () => {
     await write('post', '', { settings: { anonymityMode: 'optional' }, title: null }).expect(400);
   });
 
-  test('I05 首次发布冻结填写策略，首份前可改内容，完整校验持续生效', async () => {
+  test('I05 首次发布即冻结填写策略与题目，完整校验持续生效', async () => {
     let survey = await create(surveyDefinition());
     survey = (await write('post', `/${survey.id}/publish`, { revision: 1 }).expect(200)).body.data;
     const firstPublishedAt = survey.firstPublishedAt;
     assert.equal(survey.status, 'published');
     assert.ok(firstPublishedAt);
-    assert.equal(survey.contentLocked, false);
+    assert.equal(survey.contentLocked, true);
     await write('patch', `/${survey.id}`, { revision: survey.revision, settings: { anonymityMode: 'forced' } }).expect(409);
     await write('patch', `/${survey.id}`, { revision: survey.revision, settings: { allowMultipleSubmissions: true } }).expect(409);
     await write('patch', `/${survey.id}`, { revision: survey.revision, title: '' }).expect(422);
     const questions = structuredClone(survey.questions);
     questions[0].title = '更新题干';
-    survey = (await write('patch', `/${survey.id}`, { revision: survey.revision, questions }).expect(200)).body.data;
-    assert.equal(survey.definitionRevision, 2);
-    survey = (await write('patch', `/${survey.id}`, { revision: survey.revision, title: '新标题', description: '新说明', questions }).expect(200)).body.data;
-    assert.equal(survey.definitionRevision, 2, '相同定义和元信息不变定义版号');
+    await write('patch', `/${survey.id}`, { revision: survey.revision, questions }).expect(409);
+    assert.equal(survey.definitionRevision, 1);
+    survey = (await write('patch', `/${survey.id}`, { revision: survey.revision, title: '新标题', description: '新说明', questions: survey.questions }).expect(200)).body.data;
+    assert.equal(survey.definitionRevision, 1, '相同定义和元信息不变定义版号');
     survey = (await write('post', `/${survey.id}/close`, { revision: survey.revision }).expect(200)).body.data;
     await write('patch', `/${survey.id}`, { revision: survey.revision, questions: [] }).expect(422);
     await write('patch', `/${survey.id}`, { revision: survey.revision, settings: { allowMultipleSubmissions: true } }).expect(409);
@@ -195,12 +195,12 @@ describe('M3 survey management', () => {
       assert.equal((await read(survey.id)).questions[0].validation.maxLength, maxLength);
       const raw = await resource.db.collection('surveys').findOne({ _id: new ObjectId(survey.id) }, { promoteLongs: false });
       if (maxLength > 2147483647) assert.equal(raw.questions[0].validation.maxLength._bsontype, 'Long');
-      survey = (await write('post', `/${survey.id}/publish`, { revision: 1 }).expect(200)).body.data;
       const questions = structuredClone(survey.questions);
       questions[0].title = '更新后的文本';
       survey = (await write('patch', `/${survey.id}`, { revision: survey.revision, questions }).expect(200)).body.data;
       assert.equal(survey.questions[0].validation.maxLength, maxLength);
       assert.equal((await read(survey.id)).questions[0].validation.maxLength, maxLength);
+      await write('post', `/${survey.id}/publish`, { revision: survey.revision }).expect(200);
     }
   });
 });

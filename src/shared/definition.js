@@ -1,4 +1,4 @@
-const QUESTION_FIELDS = ['id', 'type', 'title', 'required', 'options', 'validation', 'rules'];
+const QUESTION_FIELDS = ['id', 'type', 'title', 'required', 'options', 'validation', 'rules', 'reference'];
 const TYPES = ['single_choice', 'multiple_choice', 'text', 'number'];
 const OPERATORS = {
   single_choice: ['eq', 'ne'],
@@ -84,6 +84,13 @@ export function validateDefinition(definition, { complete = false } = {}) {
   questions.forEach((question, index) => {
     const field = `questions.${index}`;
     if (!object(question, field, QUESTION_FIELDS)) return;
+    if (has(question, 'reference')) {
+      if (object(question.reference, `${field}.reference`, ['questionId', 'versionId'])) {
+        for (const key of ['questionId', 'versionId']) {
+          if (typeof question.reference[key] !== 'string' || !/^[a-f0-9]{24}$/.test(question.reference[key])) add(`${field}.reference.${key}`, '版本引用不合法');
+        }
+      }
+    }
     const type = question.type;
     const knownType = TYPES.includes(type);
     if (typeof type !== 'string') add(`${field}.type`, '题型必须为字符串', 'INVALID_TYPE');
@@ -170,6 +177,14 @@ export function validateDefinition(definition, { complete = false } = {}) {
       }
 
       const { value } = condition;
+      // A version switch may leave a formerly valid condition incompatible with
+      // the new type. Retain its scalar/array shape in drafts; publishing is strict.
+      if (!complete && question.reference && operator && (!OPERATORS[type]?.includes(operator) || (['eq', 'ne', 'gt', 'gte', 'lt', 'lte'].includes(operator) && type === 'number' && typeof value !== 'number') || (['eq', 'ne'].includes(operator) && type === 'single_choice' && typeof value !== 'string'))) {
+        if (!['string', 'number'].includes(typeof value) && !Array.isArray(value)) add(`${conditionField}.value`, '条件值类型不合法', 'INVALID_TYPE');
+        else if (typeof value === 'number') number(value, `${conditionField}.value`);
+        else if (Array.isArray(value)) value.forEach((v, i) => { if (!['string', 'number'].includes(typeof v) && v !== null) add(`${conditionField}.value.${i}`, '条件值类型不合法', 'INVALID_TYPE'); });
+        return;
+      }
       const valueField = `${conditionField}.value`;
       const option = (value, valueField) => {
         if (string(value, valueField, true) && complete && !optionIds.has(value)) {

@@ -11,6 +11,7 @@ test('M3 精确认识M2校验器的兼容升级保留文档，允许未完成区
     const { db } = resource;
     const [info] = await db.listCollections({ name: 'surveys' }).toArray();
     const old = structuredClone(info.options.validator);
+    delete old.$jsonSchema.properties.questions.items.properties.reference;
     old.$jsonSchema.properties.questions.items.properties.rules.items.properties.condition.properties.value.items.bsonType = ['string', 'int', 'long', 'double'];
     await db.command({ collMod: 'surveys', validator: old });
     const now = new Date();

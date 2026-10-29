@@ -1,0 +1,6 @@
+.library-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 1rem; align-items: start; }
+.library-row { border-bottom: 1px solid var(--border, #d9dfe8); padding: .8rem 0; overflow-wrap: anywhere; }
+.library-row .toolbar { flex-wrap: wrap; margin-top: .4rem; }
+.panel { margin-bottom: 1rem; }
+#content-editor .field { display: flex; flex-direction: column; gap: .4rem; margin: .8rem 0; }
+#comparisons article { min-width: 0; overflow-wrap: anywhere; }

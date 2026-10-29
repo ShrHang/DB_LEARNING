@@ -19,7 +19,7 @@ flowchart LR
 | 目录/入口 | 职责 |
 | --- | --- |
 | [app.js](../src/app.js) / [server.js](../src/server.js) | 创建应用与监听分离；配置检查、初始化和正常关闭 |
-| [services](../src/services/) | 账号、管理、填写、提交、统计和删除业务 |
+| [services](../src/services/) | 账号、题目版本/共享、题库、问卷管理、提交、统计和删除 |
 | [repositories](../src/repositories/) / [serializers](../src/serializers/) | MongoDB 查询、事务操作与响应字段白名单 |
 | [shared](../src/shared/) | 前后端共用的纯函数，无数据库、HTTP、DOM 或 Node 专用依赖 |
 | [public](../public/) | 页面、交互状态和 API 客户端 |
@@ -29,7 +29,7 @@ flowchart LR
 
 ## 2. 账号、会话与权限
 
-密码使用异步 scrypt：N=32768、r=8、p=1、maxmem=64MiB、随机盐 16 字节、派生结果 64 字节，比较采用 timingSafeEqual。校验存储编码与参数，拒绝未配对 UTF-16 代理项，不对合法密码去空格、截断或 Unicode 归一化。用户名唯一且区分大小写。
+[账号服务](../src/services/auth-service.js)使用随机盐与异步scrypt保存密码，以timingSafeEqual比较；校验编码和参数，拒绝未配对UTF-16代理项，不去空格、截断或Unicode归一化。用户名唯一且区分大小写，输入合同见 [API](api.md#2-账号接口)。
 
 会话保存 userId、issuedAt、absoluteExpiresAt 和 CSRF token，登录时重新生成会话 ID。受保护请求显式检查固定 24 小时期限，不依赖 MongoDB TTL 是否已经清理。Cookie 使用 HttpOnly、SameSite=Lax，Secure 由 HTTPS 配置决定。
 
@@ -39,11 +39,19 @@ flowchart LR
 
 ## 3. 草稿、修订与冻结
 
-结构校验允许草稿缺少题干、选项或未完成条件，但字段类型及 ID 格式、唯一性必须合法。发布和首次发布后的题目编辑执行完整校验：标题/题干非空、有题目及合法选项、范围一致、规则引用存在且与题型兼容；规则图允许有环。
+结构校验允许草稿缺少题干、选项或未完成条件，但字段类型及 ID 格式、唯一性必须合法。发布执行完整校验：标题/题干非空、有题目及合法选项、范围一致、规则引用存在且与题型兼容；规则图允许有环。
 
-管理操作按 ownerId 与 revision 条件更新，冲突返回 409。题目定义修改递增 definitionRevision，并要求 contentLocked=false。首次发布冻结匿名和重复填写策略，首份成功答卷与内容冻结在同一事务完成。标题、说明、截止时间修改不改变题目定义版本。
+管理操作按 ownerId 与 revision 条件更新，冲突返回 409。题目定义修改递增 definitionRevision，并要求 contentLocked=false。首次发布同时冻结填写策略和全部题目配置；首份答卷按 firstSubmittedAt=null 判断，并与首次时间同事务保存。标题、说明、截止时间修改不改变题目定义版本。
 
 问卷持久状态为 draft、published、closed；到期由 deadlineAt 动态判断。重新开放必须满足截止要求，延长截止时间不会自动重开 closed 问卷。
+
+### 3.1 独立版本与问卷物化
+
+[题目服务](../src/services/question-service.js)管理不可变版本、父版/另存来源和授权；[题库服务](../src/services/bank-service.js)只管理个人分类。版本序号分配与记录插入在同一事务完成。
+
+[问卷服务](../src/services/survey-service.js)根据版本引用生成固定内容，客户端同时提供的内容必须一致；保留同一实例的相同引用时使用原内嵌内容。新增选用、另存和分类收录真实更新 questions.token，与撤销/归档共同写入，事务重试后重新授权。该约束依赖数据库，适用于多应用实例。
+
+换版保留本地题目ID及局部配置，失效规则可暂存但不能发布。草稿保存临时题时原子关联独立版本；发布后仅导出，不改变原问卷。复制前核验全部引用，发现不可用题目整体回滚；复制/导出通过原问卷guard与永久删除协调。字段和升级约束见 [数据库设计](database.md)，输入输出见 [API](api.md#31-问卷引用导出与复制)。
 
 ## 4. 答案校验与最终路径
 
@@ -67,13 +75,13 @@ flowchart TD
   B -->|无记录| C[校验定义版本、答案和最终路径]
   C --> D[事务内读取问卷并检查受理条件]
   D --> E[写入 surveyGuards 协调 token]
-  E --> F[必要时冻结题目并插入答卷]
+  E --> F[必要时记录首次提交时间并插入答卷]
   F --> G[提交事务后返回成功]
 ```
 
 requestId 是一次主动提交的 UUID，结果未知时保持原标识与负载。摘要包含 definitionRevision、anonymous 和规范化请求答案；题目条目及多选值排序，空值统一 null，非空文本保留原文。缺失整条答案与显式 null 条目视为不同请求，摘要不依赖当前开放状态。
 
-事务前完成答案复核；事务内首次读取问卷时检查 published、截止时间、版本及填写策略，再检查幂等记录，实际更新 guard。首份冻结、首次提交时间和答卷插入同事务成功或回滚；后续答卷不写问卷计数。唯一索引保证幂等与每账号单次限制。
+事务前完成答案复核；事务内首次读取问卷时检查 published、截止时间、版本及填写策略，再检查幂等记录，实际更新 guard。首次时间和答卷共同提交或回滚，唯一索引约束幂等与单次填写，不保存问卷累计计数。
 
 受理点是事务读取问卷并检查状态/时间的步骤。关闭前已受理尝试可完成；事务冲突回滚后重新检查，不沿用先前状态。驱动 withTransaction 的回调内顺序 await，使用同一 session，重试保持答卷 ID 和负载稳定，不在回调中发送 HTTP 响应。
 
@@ -86,6 +94,12 @@ requestId 是一次主动提交的 UUID，结果未知时保持原标识与负�
 分页使用 submittedAt、_id 降序与 limit+1，游标绑定问卷及必要题目作用域；每次查询均重新授权，不承诺多次读取为同一数据库快照。只关联本页实名答卷所需用户名，匿名 respondent=null，不返回内部身份、幂等字段或会话。
 
 [统计页面](../public/js/statistics.js)用请求世代丢弃迟到响应，切题重置游标，授权失败或资源消失时清除旧内容。用户文本通过 textContent 展示；数字 0 保留，null 展示“暂无数据”。
+
+### 6.1 版本统计与题库页面
+
+[跨卷统计服务](../src/services/question-statistics-service.js)从submissions关联当前用户拥有的surveys，按reference和本地questionId筛选最终有效非空答案。facet计算分母、均值与选项次数，数字频次分组后分页；回答页只关联实名用户并用白名单输出。已有引用允许查询自己的该版本统计，不开放原题其他历史或他人数据。
+
+[题库页面](../public/js/questions.js)提供内容表单、版本来源、恢复/另存、共享、分类和版本对比；[问卷编辑器](../public/js/editor.js)提供选题、换版、旧题保存及复制。版本内容只读，草稿可改局部必答/跳转。填写输出剥离reference，规则函数只处理普通题目定义。用户文本通过textContent展示，题库页写入前核对账号；结果未知的新建请求不自动重放。
 
 <a id="survey-deletion-design"></a>
 
@@ -101,6 +115,6 @@ requestId 是一次主动提交的 UUID，结果未知时保持原标识与负�
 
 ## 8. 配置与验证
 
-启动检查配置、数据库连接、副本集及结构兼容性，初始化可重复执行而不改写业务数据。错误响应统一为 code、message 和可选 details，不返回数据库堆栈或敏感字段。
+启动检查配置、数据库连接、副本集及结构兼容性，初始化可重复执行，保留业务内容；可识别旧结构的冻结升级见 [数据库设计](database.md)。错误响应统一为 code、message 和可选 details，不返回数据库堆栈或敏感字段。
 
 测试通过业务时钟和仅在测试装配中传入的事务钩子控制边界，数据库写入、索引和事务仍是真实 MongoDB 操作。运行方式、用例与验证范围见 [测试说明](test-cases.md)。

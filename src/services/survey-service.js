@@ -4,6 +4,9 @@ import { isDeepStrictEqual } from 'node:util';
 import { AppError } from '../errors.js';
 import { createSurveyRepository } from '../repositories/surveys.js';
 import { createSurveyGuardRepository } from '../repositories/survey-guards.js';
+import { createQuestionService } from './question-service.js';
+import { transaction } from './library-common.js';
+import { questionContent } from '../shared/question-content.js';
 import { validateDefinition } from '../shared/definition.js';
 
 const missing = () => new AppError(404, 'NOT_FOUND', '问卷不存在或无权访问');
@@ -33,11 +36,11 @@ function deadlineOf(value) {
   if (!shape.test(value) || !Number.isFinite(date.getTime()) || month < 1 || month > 12 || day < 1 || day > days) throw new AppError(422, 'VALIDATION_FAILED', '截止时间不合法', [{ field: 'deadlineAt', message: '请提供有效且带时区的日期时间' }]);
   return date;
 }
-function validate(document, complete) {
+function validate(document, complete, publishing = false) {
   const result = validateDefinition(document, { complete });
   if (result.valid) return;
   const malformed = result.errors.some(error => ['INVALID_TYPE', 'UNKNOWN_FIELD'].includes(error.code));
-  throw new AppError(malformed ? 400 : 422, 'VALIDATION_FAILED', complete ? '问卷未通过完整校验' : '草稿结构不合法', result.errors);
+  throw new AppError(malformed && !publishing ? 400 : 422, 'VALIDATION_FAILED', complete ? '问卷未通过完整校验' : '草稿结构不合法', result.errors);
 }
 function normalizeQuestions(questions) {
   return questions.map(question => ({
@@ -64,7 +67,8 @@ export function serializeSurvey(document) {
   };
 }
 
-export function createSurveyService({ db, client, clock }) {
+export function createSurveyService({ db, client, clock, questionHooks = {} }) {
+  const library = createQuestionService({ db, client, clock, hooks: questionHooks });
   const repository = createSurveyRepository(db);
   const guards = createSurveyGuardRepository(db);
   async function own(id, ownerId) {
@@ -73,8 +77,8 @@ export function createSurveyService({ db, client, clock }) {
     if (!document) throw missing();
     return document;
   }
-  async function update(document, revision, changes, conditions = {}) {
-    const result = await repository.updateOwn({ _id: document._id, ownerId: document.ownerId, revision, ...conditions }, { ...changes, updatedAt: new Date(clock.now()) });
+  async function update(document, revision, changes, conditions = {}, session) {
+    const result = await repository.updateOwn({ _id: document._id, ownerId: document.ownerId, revision, ...conditions }, { ...changes, updatedAt: new Date(clock.now()) }, session);
     if (!result) throw conflict();
     return serializeSurvey(result);
   }
@@ -95,11 +99,13 @@ export function createSurveyService({ db, client, clock }) {
       // Do not coerce malformed supplied values into legitimate empty fields.
       if (Object.hasOwn(body, 'title')) document.title = body.title;
       if (Object.hasOwn(body, 'description')) document.description = body.description;
-      validate(document, false);
-      document.questions = normalizeQuestions(document.questions);
+
       const session = client.startSession();
       try {
         await session.withTransaction(async () => {
+          document.questions = await library.materialize(ownerId, body.questions ?? [], [], session);
+          validate(document, false);
+          document.questions = normalizeQuestions(document.questions);
           await repository.insert(document, session);
           await guards.insert(document._id, session);
         }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, readPreference: 'primary', maxCommitTimeMS: 10000 });
@@ -116,15 +122,71 @@ export function createSurveyService({ db, client, clock }) {
       for (const key of ['title', 'description', 'questions']) if (Object.hasOwn(body, key)) changes[key] = body[key];
       if (Object.hasOwn(body, 'settings')) changes.settings = settingsOf(body.settings, document.settings);
       if (Object.hasOwn(body, 'deadlineAt')) changes.deadlineAt = deadlineOf(body.deadlineAt);
-      const candidate = { ...document, ...changes };
-      validate(candidate, document.firstPublishedAt !== null);
-      if (Object.hasOwn(changes, 'questions')) changes.questions = normalizeQuestions(changes.questions);
-      const questionsChanged = Object.hasOwn(changes, 'questions') && !isDeepStrictEqual(changes.questions, document.questions);
-      const policyChanged = changes.settings && !isDeepStrictEqual(changes.settings, document.settings);
-      if (policyChanged && document.firstPublishedAt !== null) throw new AppError(409, 'SETTINGS_LOCKED', '首次发布后匿名模式和重复填写策略不可修改');
-      if (questionsChanged && document.contentLocked) throw new AppError(409, 'CONTENT_LOCKED', '已有成功答卷，题目、校验与跳转不可修改');
-      if (questionsChanged) changes.definitionRevision = document.definitionRevision + 1;
-      return update(document, revision, changes, { ...(questionsChanged ? { contentLocked: false } : {}), ...(policyChanged ? { firstPublishedAt: null } : {}) });
+      return transaction(client, async session => {
+        if (Object.hasOwn(changes, 'questions')) changes.questions = await library.materialize(ownerId, body.questions, document.questions, session);
+        const candidate = { ...document, ...changes };
+        validate(candidate, document.firstPublishedAt !== null);
+        if (Object.hasOwn(changes, 'questions')) changes.questions = normalizeQuestions(changes.questions);
+        const questionsChanged = Object.hasOwn(changes, 'questions') && !isDeepStrictEqual(changes.questions, document.questions);
+        const policyChanged = changes.settings && !isDeepStrictEqual(changes.settings, document.settings);
+        if (policyChanged && document.firstPublishedAt !== null) throw new AppError(409, 'SETTINGS_LOCKED', '首次发布后匿名模式和重复填写策略不可修改');
+        if (questionsChanged && (document.contentLocked || document.firstPublishedAt !== null)) throw new AppError(409, 'CONTENT_LOCKED', '首次发布后题目、校验与跳转不可修改');
+        if (questionsChanged) changes.definitionRevision = document.definitionRevision + 1;
+        return update(document, revision, changes, { ...(questionsChanged ? { contentLocked: false, firstPublishedAt: null } : {}), ...(policyChanged ? { firstPublishedAt: null } : {}) }, session);
+      });
+    },
+    async exportQuestion(ownerId, id, questionId, body) {
+      bodyFields(body, ['revision']);
+      const rev = revisionOf(body);
+      await own(id, ownerId);
+      return transaction(client, async session => {
+        const doc = await repository.findOwn(new ObjectId(id), new ObjectId(ownerId), session);
+        if (!doc) throw missing();
+        if (doc.revision !== rev) throw conflict();
+        const q = doc.questions.find(q => q.id === questionId);
+        if (!q) throw missing();
+        if (q.reference) throw new AppError(409, 'ALREADY_LINKED', '该题已关联独立版本，请到题目库维护');
+        const created = await library.insert(ownerId, questionContent(q), session);
+        if (doc.firstPublishedAt === null && !doc.contentLocked) {
+          q.reference = { questionId: created.question.id, versionId: created.version.id };
+          await update(doc, rev, { questions: doc.questions, definitionRevision: doc.definitionRevision + 1 }, { firstPublishedAt: null, contentLocked: false }, session);
+        } else {
+          // Conflict with concurrent permanent deletion without changing published content.
+          const guard = await guards.touch(doc._id, session);
+          if (!guard.matchedCount) throw new AppError(503, 'TEMPORARY_UNAVAILABLE', '问卷协调记录缺失');
+        }
+        return created;
+      });
+    },
+    async clone(ownerId, id, body) {
+      bodyFields(body, ['revision']);
+      const rev = revisionOf(body);
+      await own(id, ownerId);
+      return transaction(client, async session => {
+        const source = await repository.findOwn(new ObjectId(id), new ObjectId(ownerId), session);
+        if (!source) throw missing();
+        if (source.revision !== rev) throw conflict();
+        const unavailable = [];
+        for (const [index, question] of source.questions.entries()) if (question.reference) {
+          try { await library.access(ownerId, question.reference.questionId, session, { usable: true, touch: true }); }
+          catch (error) {
+            if (![404, 409].includes(error.status)) throw error;
+            unavailable.push({ field: `questions.${index}`, message: `${question.title || '未命名题目'}：${error.status === 404 ? '使用授权已失效' : '题目已归档'}` });
+          }
+        }
+        if (unavailable.length) throw new AppError(409, 'QUESTION_UNAVAILABLE', '无法复制，请先处理不可用题目', unavailable);
+        const remap = new Map(source.questions.map(q => [q.id, randomUUID()]));
+        const incoming = source.questions.map(q => ({ ...q, id: remap.get(q.id), rules: (q.rules ?? []).map(r => ({ ...r, target: remap.get(r.target) ?? r.target })) }));
+        const now = new Date(clock.now());
+        const questions = await library.materialize(ownerId, incoming, [], session, true);
+        const doc = { ...source, _id: new ObjectId(), slug: randomUUID(), title: `${source.title}（副本）`, status: 'draft', deadlineAt: null, questions, revision: 1, definitionRevision: 1, contentLocked: false, firstPublishedAt: null, firstSubmittedAt: null, createdAt: now, updatedAt: now };
+        validate(doc, false);
+        const guard = await guards.touch(source._id, session);
+        if (!guard.matchedCount) throw new AppError(503, 'TEMPORARY_UNAVAILABLE', '来源问卷状态异常');
+        await repository.insert(doc, session);
+        await guards.insert(doc._id, session);
+        return serializeSurvey(doc);
+      });
     },
     async transition(ownerId, id, action, body) {
       const document = await own(id, ownerId);
@@ -134,8 +196,8 @@ export function createSurveyService({ db, client, clock }) {
       const expected = { publish: 'draft', close: 'published', reopen: 'closed' }[action];
       if (!expected || document.status !== expected) throw new AppError(409, 'INVALID_STATUS', '当前问卷状态不允许执行此操作');
       const changes = { status: action === 'close' ? 'closed' : 'published' };
-      if (action !== 'close') validate(document, true);
-      if (action === 'publish') changes.firstPublishedAt = new Date(clock.now());
+      if (action !== 'close') validate(document, true, true);
+      if (action === 'publish') { changes.firstPublishedAt = new Date(clock.now()); changes.contentLocked = true; }
       if (action === 'reopen' && document.deadlineAt && document.deadlineAt.getTime() <= clock.now()) throw new AppError(409, 'DEADLINE_PASSED', '截止时间已到，请先延长期限或取消截止时间再重开');
       return update(document, revision, changes, { status: expected });
     }

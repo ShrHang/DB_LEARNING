@@ -31,6 +31,7 @@ const question = object({
     max: number,
     integer: boolean,
   }),
+  reference: object({ questionId: string, versionId: string }, ['questionId', 'versionId']),
   rules: {
     bsonType: 'array',
     items: object({
@@ -51,7 +52,7 @@ function schema(properties) {
   return { $jsonSchema: object(properties, Object.keys(properties)) };
 }
 
-const definitions = {
+export const definitions = {
   users: {
     validator: schema({ _id: objectId, username: string, passwordHash: string, createdAt: date, schemaVersion: integer }),
     indexes: [{ key: { username: 1 }, name: 'username_1', unique: true, collation: { locale: 'simple' } }],
@@ -80,6 +81,7 @@ const definitions = {
       schemaVersion: integer,
     }),
     indexes: [
+      { key: { ownerId: 1, 'questions.reference.versionId': 1 }, name: 'survey_version' },
       { key: { slug: 1 }, name: 'slug_1', unique: true },
       { key: { ownerId: 1, createdAt: -1, _id: -1 }, name: 'ownerId_1_createdAt_-1__id_-1' },
     ],
@@ -116,6 +118,26 @@ const definitions = {
     validator: schema({ _id: string, session: { bsonType: ['string', 'object'] }, expires: date }),
     indexes: [{ key: { expires: 1 }, name: 'expires_1', expireAfterSeconds: 0 }],
   },
+  questions: {
+    validator: schema({ _id: objectId, ownerId: objectId, archived: boolean, nextVersion: integer, revision: integer, token: objectId, createdAt: date, updatedAt: date, schemaVersion: integer }),
+    indexes: [{ key: { ownerId: 1, _id: -1 }, name: 'question_owner' }],
+  },
+  questionVersions: {
+    validator: schema({ _id: objectId, questionId: objectId, number: integer, parentVersionId: { bsonType: ['objectId', 'null'] }, sourceVersionId: { bsonType: ['objectId', 'null'] }, operation: { enum: ['create', 'edit', 'restore', 'fork'] }, content: object({ type: { enum: ['single_choice', 'multiple_choice', 'text', 'number'] }, title: string, options: question.properties.options, validation: question.properties.validation }, ['type', 'title', 'validation']), createdAt: date, schemaVersion: integer }),
+    indexes: [{ key: { questionId: 1, number: 1 }, name: 'question_version', unique: true }, { key: { sourceVersionId: 1 }, name: 'version_source' }],
+  },
+  questionShares: {
+    validator: schema({ _id: objectId, questionId: objectId, userId: objectId, createdAt: date, schemaVersion: integer }),
+    indexes: [{ key: { questionId: 1, userId: 1 }, name: 'question_recipient', unique: true }, { key: { userId: 1, questionId: 1 }, name: 'recipient_questions' }],
+  },
+  questionBanks: {
+    validator: schema({ _id: objectId, ownerId: objectId, name: string, revision: integer, createdAt: date, schemaVersion: integer }),
+    indexes: [{ key: { ownerId: 1, _id: -1 }, name: 'bank_owner' }],
+  },
+  questionBankItems: {
+    validator: schema({ _id: objectId, bankId: objectId, questionId: objectId, createdAt: date, schemaVersion: integer }),
+    indexes: [{ key: { bankId: 1, questionId: 1 }, name: 'bank_question', unique: true }],
+  },
   surveyGuards: {
     validator: schema({ _id: objectId, token: objectId, schemaVersion: integer }),
     indexes: [],
@@ -125,7 +147,9 @@ const definitions = {
 // M2's exact survey validator did not allow an unfinished interval endpoint.
 // M3 adds null placeholders only within draft rule values. Full publish-time
 // validation still rejects them. This relaxation needs no document rewriting.
-const m2SurveyValidator = structuredClone(definitions.surveys.validator);
+const phase1SurveyValidator = structuredClone(definitions.surveys.validator);
+delete phase1SurveyValidator.$jsonSchema.properties.questions.items.properties.reference;
+const m2SurveyValidator = structuredClone(phase1SurveyValidator);
 m2SurveyValidator.$jsonSchema.properties.questions.items.properties.rules.items.properties.condition.properties.value.items.bsonType = ['string', 'int', 'long', 'double'];
 
 function canonical(value) {
@@ -191,7 +215,7 @@ export async function initializeDatabase(db) {
       missingIndexes.set(name, definition.indexes);
       continue;
     }
-    if (name === 'surveys' && sameValue(info.options.validator, m2SurveyValidator)) {
+    if (name === 'surveys' && (sameValue(info.options.validator, m2SurveyValidator) || sameValue(info.options.validator, phase1SurveyValidator))) {
       // Recognize only the exact shipped predecessor, never arbitrary user edits.
       assertCollectionCompatible(name, { ...info, options: { ...info.options, validator: definition.validator } }, definition);
       upgrades.push(name);
@@ -214,6 +238,10 @@ export async function initializeDatabase(db) {
     const indexes = missingIndexes.get(name);
     if (indexes.length) await db.collection(name).createIndexes(indexes);
   }
+
+  // An explicit supported predecessor upgrade: freeze published legacy content,
+  // without changing answers, definition revisions, request hashes or timestamps.
+  await db.collection('surveys').updateMany({ firstPublishedAt: { $ne: null }, contentLocked: false }, { $set: { contentLocked: true } });
 
   // Upgrade before HTTP starts. Existing tokens must never be overwritten, and
   // runtime submit/delete paths must not upsert a deleted survey's guard.

@@ -6,7 +6,7 @@
 
 - 填写者不能修改或撤回成功答卷；再次填写形成新答卷，并受重复填写策略约束。作者可按[整卷删除契约](#survey-deletion-data)永久删除问卷及全部答卷。
 - 仅保存最终有效答案和服务端重算的路径，不保存完整交互历史或标题/说明快照；答卷展示当前问卷标题和说明。
-- 首份答卷与题目冻结在同一事务内完成；定义版本不匹配的提交被拒绝。
+- 发布冻结题目；首份答卷与首次提交时间在同一事务内完成；定义版本不匹配的提交被拒绝。
 - 用户名大小写敏感；数值采用普通浮点运算，整数必须能精确表示。
 
 ## 2. 集合边界与选择理由
@@ -18,12 +18,17 @@
 | submissions | 一次成功提交一份文档，内嵌有效答案 | 整卷/单题统计、逐题明细、完整答卷、幂等与次数查询 |
 | sessions | 一个登录会话一份文档 | 按会话 ID 鉴权和到期检查 |
 | surveyGuards | 每份现存问卷一条内部协调记录 | 新增答卷事务写 token，整卷删除事务删记录；不向作者输出 |
+| questions | 一个独立题目的身份及版本分配状态 | 所有者列表、归档、授权协调 |
+| questionVersions | 一个不可变版本的内容和来源 | 指定版本读取、历史及分支查询 |
+| questionShares | 一个题目对一个接收用户的授权 | 授权检查、共享列表 |
+| questionBanks | 一个个人具名题库 | 分类列表和管理 |
+| questionBankItems | 一个题库的一条题目收录关系 | 分类选题，不扩展原题权限 |
 
-题目、选项与规则内嵌在 surveys 中，共同读取和校验。答卷独立存储以支持持续增长、分页和聚合；每份答卷内嵌本次最终答案。
+问卷内嵌所选版本的内容及局部配置，支持整份读取和校验；独立题目与版本负责复用、历史及共享。答卷独立增长，每份内嵌最终答案；授权和题库收录独立成文档，避免无界成员数组。
 
 ## 3. 类型和标识约定
 
-- users、surveys、submissions、surveyGuards 的 `_id` 和集合间用户/问卷引用使用 BSON ObjectId，API 边界转换为字符串；sessions 的 `_id` 为字符串。
+- 除 sessions 外，各集合的 `_id` 及集合间引用使用 BSON ObjectId；API边界转换为字符串。sessions 的 `_id` 为字符串，问卷内 reference 的两个ID也使用小写十六进制字符串，便于共享纯函数处理。
 - 问卷内题目和选项使用稳定字符串 ID；重排或修改文字不改变 ID。题目 ID 不能使用保留值 END。
 - 题目数组顺序是展示顺序，规则数组顺序是匹配优先级；跳转引用 ID，不引用题号或选项文字。
 - 日期使用 BSON Date，接口使用带时区的 ISO 8601。截止判定采用服务器时间。
@@ -53,18 +58,20 @@ username 的唯一索引与登录查询均使用 simple 二进制比较语义，
 | settings.anonymityMode | enum | forced、optional、forbidden；首次发布后冻结 |
 | settings.allowMultipleSubmissions | boolean | 默认 false；首次发布后冻结 |
 | deadlineAt | Date 或 null | null 表示不设截止 |
-| questions | array | 题目内嵌，顺序即默认答题顺序 |
+| questions | array | 内嵌题目及可选 reference，顺序即默认答题顺序 |
 | definitionRevision | integer | 初始 1；题目、选项、校验、规则或顺序变化时递增 |
 | revision | integer | 问卷并发编辑版本，管理更新时递增 |
-| contentLocked | boolean | 首份答卷成功提交后为 true，永久禁止题目定义变化 |
-| firstSubmittedAt | Date 或 null | 首次成功提交时间，与首次冻结同事务写入 |
+| contentLocked | boolean | 首次发布时为 true，永久禁止题目定义变化 |
+| firstSubmittedAt | Date 或 null | 首次成功提交时间，与首份答卷同事务写入 |
 | createdAt / updatedAt | Date | 创建/更新时刻 |
 | firstPublishedAt | Date 或 null | 判断是否已首次发布，支持冻结填写策略 |
 | schemaVersion | integer | 初始 1 |
 
-contentLocked 与答卷存在性有关，但保留该字段用于问卷文档上的条件更新。通过事务维护它与首份答卷的一致性，不维护重复的选项计数或问卷总答卷数。
+contentLocked 在首次发布时设为 true，关闭和重开不解除冻结；firstSubmittedAt 可继续为 null。首份答卷仅写入首次提交时间和管理修订号，不维护选项计数或总答卷数。
 
 标题、说明和截止时间变化不递增 definitionRevision，避免仅修改说明就迫使填写者重填；它们仍更新 revision。每次题目定义保存均带作者和旧 revision 条件，避免并发编辑覆盖。发布、重开、冻结字段的具体更新权限在服务层统一控制。
+
+关联独立版本的题目含 `reference:{questionId,versionId}`，并内嵌该版本的 type/title/options/validation，以及局部 required/rules。服务端核验授权和内容后物化，拒绝伪造；答卷仍以问卷内 questionId 关联，不复制来源到每条答案。独立版本字段见第12节。
 
 题目结构示例（使用简短 ID 便于阅读）：
 
@@ -87,8 +94,8 @@ contentLocked 与答卷存在性有关，但保留该字段用于问卷文档上
 - 多选约束使用 minSelections/maxSelections；精确 N 个表示为两者均为 N。长度/选择数量为非负安全整数；超过Int32的计数在仓储写入时编码为BSON Long，驱动读取后仍为安全范围内的JavaScript Number，API不暴露BSON对象。
 - 文本约束使用 minLength/maxLength，长度按 Unicode 码点计算；数字使用 min/max/integer。
 - 单选条件支持 eq/ne；多选支持 contains_any/contains_all/equals_set，条件值为非空且不重复的选项 ID 数组；数值支持 eq/ne/gt/gte/lt/lte/between，between 使用闭区间 `[min, max]`；文本题不支持跳转规则。
-- 草稿可缺省条件，条件值可为 null，多选条件可为空数组，between 可暂存单边 null；空操作符入库前规范为缺省。发布及首次发布后的内容保存要求完整合法的定义，不能保留这些占位值。
-- 完整定义中 target 为题目 ID 或保留值 END；草稿未选目标可暂存 null，发布及首次发布后的内容保存时必须补全。无匹配默认下一题，空答不匹配条件。允许回跳和有环图。
+- 草稿可缺省条件，条件值可为 null，多选条件可为空数组，between 可暂存单边 null；空操作符入库前规范为缺省。发布要求完整合法的定义，之后不允许修改题目，不能保留这些占位值。
+- 完整定义中 target 为题目 ID 或保留值 END；草稿未选目标可暂存 null，发布时必须补全，之后不允许修改题目。无匹配默认下一题，空答不匹配条件。允许回跳和有环图。
 
 ## 6. submissions
 
@@ -106,7 +113,7 @@ contentLocked 与答卷存在性有关，但保留该字段用于问卷文档上
 | submittedAt | Date | 服务端记录的提交时间 |
 | schemaVersion | integer | 初始 1 |
 
-value 按题型为选项 ID、选项 ID 数组、文本或数值；路径内空答统一存 null，路径外题目无答案条目。路径外缓存、改动前的答案及点击历史不进入该文档。题目定义已因首份答卷冻结，不在每份答卷复制整份题目和选项；标题/说明也不做快照。
+value 按题型为选项 ID、选项 ID 数组、文本或数值；路径内空答统一存 null，路径外题目无答案条目。路径外缓存、改动前的答案及点击历史不进入该文档。题目定义已因首次发布冻结，不在每份答卷复制整份题目和选项；标题/说明也不做快照。
 
 作者查询按所有权限定问卷，响应使用明确字段白名单。匿名不返回 respondentId、requestId、requestHash、次数约束字段或可反查身份的信息；实名需要显示用户名时由服务端关联 users，仅返回允许展示的账号信息。认证会话集合不向作者查询接口开放。
 
@@ -135,6 +142,12 @@ value 按题型为选项 ID、选项 ID 数组、文本或数值；路径内空�
 | submissions | `{ surveyId: 1, respondentId: 1 }` unique，部分过滤 `{ singleOnly: true }` | 禁止多次填写时，并发也最多一份成功 |
 | sessions | 会话主键，expires 的 TTL 索引 | express-session + connect-mongo 会话读取与清理；真实有效期另检查 absoluteExpiresAt |
 | surveyGuards | 默认 `_id` 唯一索引 | 每份问卷仅一条协调记录 |
+| surveys | `{ownerId:1,"questions.reference.versionId":1}` | 自有问卷的版本引用查询 |
+| questions | `{ownerId:1,_id:-1}` | 自有题目列表 |
+| questionVersions | `{questionId:1,number:1}` unique；`{sourceVersionId:1}` | 版本号唯一与来源查询 |
+| questionShares | `{questionId:1,userId:1}` unique；`{userId:1,questionId:1}` | 授权唯一与共享列表 |
+| questionBanks | `{ownerId:1,_id:-1}` | 个人题库列表 |
+| questionBankItems | `{bankId:1,questionId:1}` unique | 不重复收录 |
 
 所有问卷的重复策略首次发布后冻结，因此同一问卷不会混用不同 singleOnly 策略。唯一索引负责并发兜底，不能用“先查有无，再插入”替代。sessions 的 `{ expires: 1 }` 索引设置 `expireAfterSeconds: 0`；TTL 仅清理数据，鉴权仍主动检查到期时间。
 
@@ -142,15 +155,11 @@ value 按题型为选项 ID、选项 ID 数组、文本或数值；路径内空�
 
 ## 9. 原子性、版本与提交事务
 
-- 题目定义实质变化：按 ownerId、revision、contentLocked=false 条件更新同一问卷文档，同时递增 revision 和 definitionRevision。
-- 首份提交：在事务内校验当前问卷定义版本、状态、截止时间和填写策略，更新同一问卷文档的冻结字段，并插入答卷；任一失败整体回滚。
-- 并发编辑与首份提交竞争同一问卷文档；发生冲突后重新检查，不能保存定义版本不符的答案，也不能留下“无成功答卷却已永久冻结”的状态。
-- 后续提交使用已经冻结的内容版本；标题和说明变化不导致定义失效。页面 definitionRevision 不同则拒绝。
-- 幂等重试优先检查现有答卷：同标识同内容返回原成功结果；不同内容报冲突。即使问卷后来关闭或到期，返回已成功的结果也不算新增受理。
-- transaction 重试仍使用同一 requestId；唯一冲突应区分重复账号限制和同请求重试。
-- 每次事务尝试的首个数据库读取为读取问卷，紧接着采样服务端时间并检查开放状态、截止及定义版本，这一检查是受理点。已受理的后续提交可在关闭后完成；首份提交仍可能因冻结写入与管理更新冲突。事务回调重试须重新读取和受理，不能沿用前次结论。
+草稿按ownerId、revision及contentLocked=false更新，题目变化同时递增revision和definitionRevision。发布后题目不可改，标题、说明和截止时间不改变定义版本。
 
-请求正文校验和有限路径计算在事务前完成，事务内重新校验问卷版本。事务使用 snapshot 读取、majority 写入和 primary 读取偏好；提交确认超时上限为 10 秒。错误与结果待确认处理见 [API](api.md)。
+提交在事务前复核答案与有限路径；每次事务尝试先读问卷，再采样时间检查状态、截止、版本及填写策略，作为受理点。更新guard后检查同请求，首份记录firstSubmittedAt并插入答卷；各步同session串行执行。冲突回滚后重新受理，失败不留下首次时间或答卷，发布冻结继续有效。
+
+幂等重放先检查已保存请求，同内容返回原成功结果、不同内容报冲突；关闭或到期不阻止成功重放。重试保留requestId，唯一冲突须区分同请求和账号次数限制。事务使用snapshot读取、majority写入和primary偏好，提交确认超时10秒；未知结果及受理细节见 [系统设计](design.md#5-提交幂等与事务) 和 [API](api.md)。
 
 sessions 由 express-session + connect-mongo 管理，顶层为字符串 `_id`、字符串或对象 `session` 载荷以及 Date 类型 `expires`。载荷保存 userId、issuedAt、absoluteExpiresAt、csrfToken 等；不要求业务文档的 schemaVersion。登录后固定 24 小时，请求不续期，服务端主动检查 absoluteExpiresAt。
 
@@ -158,7 +167,7 @@ sessions 由 express-session + connect-mongo 管理，顶层为字符串 `_id`�
 
 - 数据库 `$jsonSchema` 校验字段类型、必填、枚举及嵌套形状；服务端负责权限、跨字段引用、题型约束、规则求值和发布后不可变性。
 - 统计从 submissions 聚合，不单独持久化选项计数。按有效非空答案统计，填空明细分页，数值均值不包含空答，0 是有效数值。
-- 初始化补建缺失集合和索引，使用 strict/error 校验模式，保留业务数据；不兼容的结构会阻止初始化，不静默覆盖。
+- 初始化使用 strict/error 校验，补建集合与索引；不兼容结构阻止启动，不静默覆盖。可识别结构的升级规则见第12节。
 - 未选选项的次数返回 0；无有效数值时 average=null；有效回答数为 0 时 percentage=null。百分比以该题非空有效回答数为分母，多选合计可超过 100%。
 
 统计按 surveyId 筛选 submissions，以同一 `$facet` 输入计算整卷总量、题目非空回答数及选项次数。逐题明细只包含最终路径内的非空回答；答卷以 submittedAt/_id 降序分页，仅为本页实名答卷关联 username。匿名行在关联前移除 respondentId，服务输出再执行白名单。
@@ -169,22 +178,26 @@ sessions 由 express-session + connect-mongo 管理，顶层为字符串 `_id`�
 
 永久删除目标包括 surveys 文档、该 surveyId 下全部 submissions 及内部协调记录；不删除 users、sessions 或其他问卷。资格、确认及重试规则见 [删除 API](api.md#survey-deletion-api)。
 
-### 11.1 为提交与删除建立共同写入点
+`surveyGuards` 每份问卷一条 `{_id: ObjectId(问卷ID), token: ObjectId, schemaVersion:1}`，不存账号、答案或墓碑。新增答卷真实更新token，删除移除同一记录，以写冲突协调在途提交；不改变值的更新不能代替实际写入。独立guard使后续提交不额外写问卷，保留关闭前已受理请求可完成的语义。
 
-`surveyGuards` 每份问卷一条记录：`{_id: ObjectId(问卷ID), token: ObjectId, schemaVersion: 1}`，不存账号、答案、历史或删除墓碑。
+初始化为现存问卷幂等补建guard，不覆盖token；新问卷与guard原子创建。运行时缺失guard须报服务异常，不允许upsert重建。删除事务重查所有权、revision和资格，依次删除guard、全部答卷和问卷，以snapshot/majority提交；任一失败全部回滚，不退化为非事务分批清理。
 
-每次新增答卷事务都将 token 改为新的 ObjectId，删除事务删除同一协调记录，以共同写入建立冲突，防止删除后留下并发插入的答卷。不改变值的更新不能代替实际写入。独立协调记录使已受理的后续提交不因额外写问卷而与普通关闭/期限修改冲突。实现见 [协调仓储](../src/repositories/survey-guards.js)。
+提交先完成时，删除重试包含其结果；首份导致revision变化时须重新预览。删除先完成时，在途提交回滚后读不到问卷。删除与重开/延期也竞争问卷写入，重试须重查资格。成功后无孤立答卷，旧requestId不能恢复数据。实现见 [guard仓储](../src/repositories/survey-guards.js)、[删除服务](../src/services/deletion-service.js)，页面及重试合同见 [系统设计](design.md#survey-deletion-design)。
 
-### 11.2 初始化与故障处理
+## 12. 独立题目、版本与题库
 
-- 开始接收 HTTP 请求前，初始化为现存问卷幂等补建缺失的协调记录，不覆盖已有 token。
-- 新建问卷与新建协调记录在同一事务完成，失败一并回滚；不能出现可提交但没有协调记录的新问卷。
-- 运行时提交/删除只操作已有协调记录，缺失时明确失败并排查初始化；禁止在旧快照中upsert重建已被删除的记录。协调记录缺失而问卷仍在属于服务异常，不视为已删除。
+各集合均含 `_id` 和 schemaVersion=1。字段边界如下，索引统一见第8节。
 
-### 11.3 事务顺序与不变量
+| 集合 | 字段与用途 |
+| --- | --- |
+| questions | ownerId、archived、nextVersion、revision、token、createdAt、updatedAt；一题一文档 |
+| questionVersions | questionId、number、parentVersionId、sourceVersionId、operation、content、createdAt；一版本一文档，服务层仅插入 |
+| questionShares | questionId、userId、createdAt；一接收者一授权 |
+| questionBanks | ownerId、name、revision、createdAt |
+| questionBankItems | bankId、questionId、createdAt |
 
-新增提交先在事务中读取问卷并检查受理时间、状态和定义版本，再更新协调 token、检查同请求答卷、执行首份冻结和答卷插入；各操作串行 await 并传同一 session。事务回调重试时从头重新受理。事务外发现的成功重放直接返回，不插入答卷或重建协调记录。
+content 仅含 type/title/options/validation，保存前完整校验。大于 Int32 的安全整数计数限制编码为 BSON Long，读取和接口仍为 Number。operation 为 create/edit/restore/fork；父版本表示同题分支，sourceVersionId 表示另存来源。nextVersion 初始 2，初始版本编号 1；版本创建与题目编号、revision 更新同事务提交。
 
-删除事务读取自有问卷，校验revision和服务端当前资格（draft、closed，或published且deadlineAt已到），删除已有协调记录，再删除该问卷全部答卷与问卷文档，按snapshot/majority提交。问卷删除本身与重开/延长期限的写入建立冲突；冲突重试须重新检查资格，不能复用旧快照结论。
+新增使用与撤销/归档共同写 questions.token。授权检查、真实 token 更新和引用保存必须同事务；撤销或归档先提交时，旧快照写冲突后重新授权；引用先提交时，撤销只影响后续新增。普通草稿保留同一实例的相同引用时使用已有内嵌内容，不要求原授权仍有效。删除题库与收录关系同事务，加入收录同时写题库以协调删除。
 
-后续提交先完成时，删除重试后包含这份新答卷；首份提交若导致 revision 变化，则返回 409，须重新预览确认。删除先完成时，在途提交冲突回滚，重新读取将找不到问卷。成功删除后不留下问卷、答卷或协调记录，原成功 requestId 也不能恢复数据。删除中途失败全部回滚，结果未知时不能提前报告成功；事务资源或时间限制不会触发不受事务保护的分批永久删除。
+初始化只接受精确识别的已交付校验器，补建集合/索引并扩展 reference 校验；首次发布过但未冻结的问卷设 contentLocked=true，不改题目、定义修订号、答卷、会话或幂等字段。升级应先停止旧应用，再执行初始化和启动新应用；重复执行保留业务数据。不自动为旧题推断身份或合并历史回答。

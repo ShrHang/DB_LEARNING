@@ -1,3 +1,4 @@
+import { fillingQuestion } from '../shared/question-content.js';
 import { AppError } from '../errors.js';
 import { createSurveyRepository } from '../repositories/surveys.js';
 
@@ -15,7 +16,7 @@ export function createFillService({ db, clock }) {
     assertOpen(survey, clock.now());
     return {
       id: survey._id.toHexString(), slug: survey.slug, title: survey.title, description: survey.description,
-      settings: survey.settings, questions: survey.questions, deadlineAt: survey.deadlineAt,
+      settings: survey.settings, questions: survey.questions.map(fillingQuestion), deadlineAt: survey.deadlineAt,
       definitionRevision: survey.definitionRevision,
     };
   } };

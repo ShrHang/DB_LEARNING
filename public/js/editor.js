@@ -1,4 +1,6 @@
 import { request } from './api.js';
+import { pickQuestion } from './question-picker.js';
+import { validateDefinition } from '/shared/definition.js';
 
 const $ = selector => document.querySelector(selector);
 const form = $('#editor-form');
@@ -128,6 +130,8 @@ function showError(error) {
     $('#share-url').value = '';
     $('#copy-status').textContent = '';
     $('#statistics-link').hidden = true;
+    $('#export-questions').replaceChildren();
+    $('#clone-survey').hidden = true;
     $('#statistics-link').removeAttribute('href');
     $('#survey-status').textContent = '不可用';
     $('#survey-status').className = 'badge';
@@ -181,6 +185,8 @@ function localDate(value) {
 function updateControls() {
   fields.disabled = busy || !ready;
   $('#reload-button').disabled = busy;
+  $('#clone-survey').disabled = busy || !ready;
+  $('#export-questions').querySelectorAll('button').forEach(b => { b.disabled = busy || !ready; });
   $('#policy-fields').disabled = Boolean(survey?.firstPublishedAt);
   $('#question-fields').disabled = Boolean(survey?.contentLocked);
   $('#save-button').textContent = busy ? '正在处理…' : survey ? '保存修改' : '创建草稿';
@@ -195,6 +201,8 @@ function applySurvey(data) {
   form.hidden = false;
   unavailableId = null;
   survey = data;
+  $('#clone-survey').hidden = false;
+  renderExports();
   $('#statistics-link').hidden = !data.id;
   if (data.id) $('#statistics-link').href = `/statistics.html?id=${encodeURIComponent(data.id)}`;
   else $('#statistics-link').removeAttribute('href');
@@ -217,8 +225,8 @@ function applySurvey(data) {
   $('#reopen-button').hidden = data.status !== 'closed';
   $('#policy-note').textContent = data.firstPublishedAt ? '已首次发布：匿名及重复提交策略永久冻结。' : '首次发布后永久冻结，请在发布前确认。';
   $('#content-note').textContent = data.contentLocked
-    ? '已收到首份答卷：题目、选项、校验、顺序及跳转规则已永久冻结。标题、说明和截止时间仍可修改。'
-    : '收到首份答卷后题目定义永久冻结。规则按顺序匹配，首条命中即跳转；未命中时进入下一题，最后一题默认结束。空答不匹配规则，允许回跳、自跳及循环。';
+    ? '已首次发布：题目、选项、校验、顺序及跳转规则已永久冻结。标题、说明和截止时间仍可修改。'
+    : '首次发布后题目定义永久冻结。规则按顺序匹配，首条命中即跳转；未命中时进入下一题，最后一题默认结束。空答不匹配规则，允许回跳、自跳及循环。';
   $('#share-section').hidden = !data.firstPublishedAt;
   if (data.firstPublishedAt) $('#share-url').value = new URL(`/survey/${encodeURIComponent(data.slug)}`, location.origin).href;
   $('#copy-status').textContent = '';
@@ -397,7 +405,12 @@ function renderQuestions() {
       if (confirm('删除这道题？指向它的规则将保留原引用，并显示缺失提示。')) questions.splice(qi, 1);
     }));
     card.append(header);
-    card.append(field('题型', selectInput(types, question.type, type => {
+    const contentFields = el('fieldset');
+    contentFields.disabled = Boolean(question.reference);
+    if (question.reference) {
+      const a = el('a', '查看来源与维护版本'); a.href = `/questions.html?id=${question.reference.questionId}`; const stats = el('a', '查看该版本的跨问卷统计'); stats.href = `/questions.html?id=${question.reference.questionId}&version=${question.reference.versionId}`; card.append(a, document.createTextNode(' · '), stats, button('更换版本', () => chooseVersion(qi)));
+    }
+    contentFields.append(field('题型', selectInput(types, question.type, type => {
       const hasConfiguration = question.options?.length || question.rules?.length || Object.keys(question.validation || {}).length;
       if (hasConfiguration && !confirm('更换题型将清空这道题的选项、答案限制和跳转规则，是否继续？')) { renderQuestions(); return; }
       question.type = type;
@@ -407,11 +420,16 @@ function renderQuestions() {
       if (type === 'single_choice' || type === 'multiple_choice') question.options = [];
       renderQuestions();
     }), `questions.${qi}.type`));
-    card.append(field('题干', textInput(question.title, value => { question.title = value; refreshReferenceLabels(); }, true), `questions.${qi}.title`));
+    contentFields.append(field('题干', textInput(question.title, value => { question.title = value; refreshReferenceLabels(); }, true), `questions.${qi}.title`));
     card.append(checkbox('必答题', question.required, value => { question.required = value; }, `questions.${qi}.required`));
-    if (question.type === 'single_choice' || question.type === 'multiple_choice') renderOptions(question, qi, card);
-    renderValidation(question, qi, card);
+    if (question.type === 'single_choice' || question.type === 'multiple_choice') renderOptions(question, qi, contentFields);
+    renderValidation(question, qi, contentFields);
+    card.append(contentFields);
     renderRules(question, qi, card);
+    if (question.reference) {
+      const result = validateDefinition({ title: '草稿', questions }, { complete: true });
+      for (const error of result.errors.filter(e => e.field.startsWith(`questions.${qi}.rules`))) card.append(el('p', `跳转待修复：${error.message}`, 'field-error'));
+    }
     return card;
   });
   questionList.replaceChildren(...cards);
@@ -492,6 +510,41 @@ async function reload() {
   } finally { busy = false; updateControls(); }
 }
 for (const selector of ['#survey-title', '#survey-description', '#anonymity-mode', '#allow-multiple', '#survey-deadline']) $(selector).addEventListener('input', changed);
+async function chooseVersion(index = null) {
+  try {
+    await pickQuestion(async (questionId, version) => {
+      const old = index === null ? null : questions[index];
+      if (questions.some(q => q !== old && q.reference?.versionId === version.id)) throw { message: '同一版本在问卷中只能使用一次。' };
+      if (old && !confirm('换版会保留必答与跳转配置；不兼容的跳转需手动修复后才能发布。是否继续？')) return;
+      const next = { id: old?.id ?? crypto.randomUUID(), ...structuredClone(version.content), required: old?.required ?? false, rules: old?.rules ?? [], reference: { questionId, versionId: version.id } };
+      if (index === null) questions.push(next); else questions[index] = next;
+      changed(); renderQuestions();
+    }, index === null ? null : questions[index].reference.questionId);
+  } catch (e) { showError(e); }
+}
+function renderExports() {
+  const host = $('#export-questions'); host.replaceChildren();
+  if (!survey) return;
+  for (const q of survey.questions) if (!q.reference) host.append(button(`保存“${q.title || '未命名题目'}”为可复用题目`, () => exportQuestion(q.id)));
+}
+async function exportQuestion(questionId) {
+  if (busy) return;
+  busy = true; updateControls();
+  try {
+    await saveInternal();
+    const created = await request(`/surveys/${survey.id}/questions/${encodeURIComponent(questionId)}/save`, { method: 'POST', body: { revision: survey.revision } });
+    applySurvey(await request(`/surveys/${survey.id}`));
+    message.textContent = `已保存为独立题目 v${created.version.number}。${survey.contentLocked ? '原问卷和旧回答保持原有归属。' : '草稿已关联该版本。'}`;
+  } catch (e) { showError(e); } finally { busy = false; updateControls(); }
+}
+$('#pick-question').onclick = () => chooseVersion();
+$('#clone-survey').onclick = async () => {
+  if (busy || !survey) return;
+  if (!confirm('将保存当前编辑后复制为新草稿，不复制答卷，是否继续？')) return;
+  busy = true; updateControls();
+  try { await saveInternal(); const copy = await request(`/surveys/${survey.id}/clone`, { method: 'POST', body: { revision: survey.revision } }); dirty = false; busy = false; location.href = `/editor.html?id=${copy.id}`; }
+  catch (e) { showError(e); } finally { busy = false; updateControls(); }
+};
 $('#add-question').addEventListener('click', () => {
   questions.push({ id: crypto.randomUUID(), type: 'single_choice', title: '', required: false, options: [], validation: {}, rules: [] });
   changed(); renderQuestions();

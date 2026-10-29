@@ -81,9 +81,10 @@ test('M01.management/M04 真实编辑四题型、规则草稿、发布、关闭�
     await click('#publish-button');
     await until(() => evaluate("document.querySelector('#survey-status').textContent.includes('已发布') && !document.querySelector('#editor-fields').disabled"), '发布有回跳规则问卷');
     assert.equal(await evaluate("document.querySelector('#policy-fields').disabled"), true);
-    assert.equal(await evaluate("document.querySelector('#question-fields').disabled"), false);
+    assert.equal(await evaluate("document.querySelector('#question-fields').disabled"), true);
     assert.equal(await evaluate("document.querySelector('#share-section').hidden"), false);
-    await value(qfield(0, 'title'), '发布后可编辑');
+    assert.equal((await resource.db.collection('surveys').findOne({ _id: stored._id })).questions[0].title, '单选题');
+    await value('#survey-description', '发布后可编辑说明');
     await click('#save-button');
     await saved();
     await click('#close-button');

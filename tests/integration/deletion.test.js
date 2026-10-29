@@ -230,7 +230,7 @@ test('R5-Verify：X01—X09 删除与真实 MongoDB 事务竞争', { timeout: 24
         const payload = submissionPayload(survey, filler);
         const inFlight = save(survey, payload);
         await gate.wait();
-        assert.equal(gate.contexts[0].survey.contentLocked, seeded);
+        assert.equal(gate.contexts[0].survey.contentLocked, true);
         const closed = await close(survey);
         await remove(closed).expect(204);
         await absent(survey);

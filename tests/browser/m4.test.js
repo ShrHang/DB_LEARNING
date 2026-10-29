@@ -131,10 +131,13 @@ test('M04 旧定义、关闭提示真实；四题型输入复用校验，可选�
   await value('#fill-answer-input','😀');await click('#fill-next');assert.equal(await evaluate("document.querySelector('#fill-answer-error').hidden"),false);
   await value('#fill-answer-input',' 😀');await click('#fill-next');await value('#fill-answer-input','0');await click('#fill-next');await review();
   const questions=structuredClone(survey.questions);questions[0].title='新版';
-  await writeSurvey(owner,`/${survey.id}`,{revision:survey.revision,questions},'patch').expect(200);
+  await writeSurvey(owner,`/${survey.id}`,{revision:survey.revision,questions},'patch').expect(409);
+  // A stale/tampered page version is still rejected, even though published editing is prohibited.
+  await evaluate("window.__originalFetch=window.fetch;window.fetch=(input,init)=>{if(init?.body && String(input).includes('/submissions')){const body=JSON.parse(init.body);body.definitionRevision++;init={...init,body:JSON.stringify(body)};}return window.__originalFetch(input,init);}");
   await click('#fill-submit');await until(()=>evaluate("!document.querySelector('#fill-reload').hidden"),'旧版拒绝');
   assert.match(await evaluate("document.querySelector('#fill-error').textContent"),/更新/);assert.equal(await resource.db.collection('submissions').countDocuments({}),0);
-  // Load the updated definition as a fresh attempt, then close after opening.
+  await evaluate('window.fetch=window.__originalFetch');
+  // Reload the fixed definition as a fresh attempt, then close after opening.
   await navigate(`/survey/${survey.slug}`);await ready();await click('#fill-next');await click('#fill-next');await value('#fill-answer-input','0');await click('#fill-next');await review();
   const current=await resource.db.collection('surveys').findOne({_id:new ObjectId(survey.id)});
   await writeSurvey(owner,`/${survey.id}/close`,{revision:current.revision}).expect(200);

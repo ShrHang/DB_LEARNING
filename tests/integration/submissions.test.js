@@ -55,9 +55,8 @@ describe('M4 填写定义及真实提交', () => {
     for(const verb of ['patch','delete']) await filler.agent[verb](`/api/fill/${survey.slug}/submissions/${data.submissionId}`).set('X-CSRF-Token',filler.csrfToken).send({}).expect(404);
   });
   test('I06 旧版提交拒绝，未生成答卷或误冻结',async()=>{
-    const survey=await publishedSurvey(owner);const questions=structuredClone(survey.questions);questions[0].title='新版';
-    await writeSurvey(owner,`/${survey.id}`,{revision:survey.revision,questions},'patch').expect(200);
-    await expectFailure(survey,submissionPayload(survey,filler),409,'DEFINITION_CHANGED');
+    const survey=await publishedSurvey(owner);
+    await expectFailure(survey,submissionPayload(survey,filler,{definitionRevision:survey.definitionRevision+1}),409,'DEFINITION_CHANGED');
   });
   test('I07 三种匿名模式所有组合，匿名/实名共用次数',async()=>{
     for(const mode of ['forced','optional','forbidden'])for(const anonymous of [true,false]){

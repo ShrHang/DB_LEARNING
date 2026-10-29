@@ -325,29 +325,20 @@ test('R3-concurrency：真实 MongoDB 事务、幂等与受理竞争', { timeout
       assert.equal(closed.firstSubmittedAt.getTime(), locked.firstSubmittedAt.getTime());
     });
 
-    await run('I11 首份受理后作者编辑：事务冲突后重读版本，旧负载拒绝且不误冻结', async () => {
+    await run('I11 首份受理后作者编辑被发布冻结拒绝，原版本提交成功', async () => {
       const survey = await publishedSurvey(owner);
-      const oldBody = submissionPayload(survey, filler);
       const questions = structuredClone(survey.questions);
-      questions[0].title = '作者竞争写入的新题目';
-      let edited, afterEdit;
+      questions[0].title = '作者不能修改已发布题目';
       await gated(survey, 1, async gate => {
-        const request = send(filler, survey, oldBody);
+        const request = send(filler, survey, submissionPayload(survey, filler));
         await gate.wait();
-        edited = (await writeSurvey(owner, `/${survey.id}`, { revision: survey.revision, questions }, 'patch').expect(200)).body.data;
-        afterEdit = await raw(survey);
+        const rejected = await writeSurvey(owner, `/${survey.id}`, { revision: survey.revision, questions }, 'patch').expect(409);
+        assert.equal(rejected.body.error.code, 'CONTENT_LOCKED');
         gate.release();
-        failure(await request, 'DEFINITION_CHANGED');
+        assert.equal((await request).status, 201);
       });
-      assert.equal(edited.definitionRevision, survey.definitionRevision + 1);
-      assert.deepEqual(await raw(survey), afterEdit);
-      assert.equal(afterEdit.contentLocked, false);
-      assert.equal(afterEdit.firstSubmittedAt, null);
-      assert.deepEqual(await documents(survey), []);
-      const saved = await send(filler, edited, submissionPayload(edited, filler));
-      assert.equal(saved.status, 201);
-      const [document] = await assertFrozen(edited, 1);
-      assert.equal(document.definitionRevision, edited.definitionRevision);
+      const [document] = await assertFrozen(survey, 1);
+      assert.equal(document.definitionRevision, survey.definitionRevision);
     });
 
     await run('I11/I13 首份受理后作者关闭：冲突重试重新受理并拒绝，不留下冻结', async () => {
@@ -363,7 +354,7 @@ test('R3-concurrency：真实 MongoDB 事务、幂等与受理竞争', { timeout
         failure(await request, 'SURVEY_NOT_OPEN');
       });
       assert.deepEqual(await raw(survey), closed);
-      assert.equal(closed.contentLocked, false);
+      assert.equal(closed.contentLocked, true);
       assert.equal(closed.firstSubmittedAt, null);
       assert.deepEqual(await documents(survey), []);
       const reopened = (await writeSurvey(owner, `/${survey.id}/reopen`, { revision: closed.revision }).expect(200)).body.data;
@@ -419,7 +410,7 @@ test('R3-concurrency：真实 MongoDB 事务、幂等与受理竞争', { timeout
         failure(await request, 'SURVEY_NOT_OPEN');
       });
       assert.equal(edited.definitionRevision, survey.definitionRevision);
-      assert.equal(edited.contentLocked, false);
+      assert.equal(edited.contentLocked, true);
       assert.equal(edited.firstSubmittedAt, null);
       assert.deepEqual(await raw(survey), edited);
       assert.deepEqual(await documents(survey), []);

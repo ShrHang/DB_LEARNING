@@ -1,7 +1,7 @@
 import { Long } from 'mongodb';
 
 const countFields = ['minSelections', 'maxSelections', 'minLength', 'maxLength'];
-function storageQuestions(questions) {
+export function storageQuestions(questions) {
   return questions.map(question => {
     const validation = { ...question.validation };
     for (const field of countFields) {
@@ -26,8 +26,8 @@ export function createSurveyRepository(db) {
     findOwn: (_id, ownerId, session) => surveys.findOne({ _id, ownerId }, { session }),
     findSlug: slug => surveys.findOne({ slug }),
     findId: (_id, session) => surveys.findOne({ _id }, { session }),
-    freeze: (survey, acceptedAt, session) => surveys.updateOne({ _id: survey._id, definitionRevision: survey.definitionRevision, contentLocked: false }, { $set: { contentLocked: true, firstSubmittedAt: acceptedAt, updatedAt: acceptedAt }, $inc: { revision: 1 } }, { session }),
+    freeze: (survey, acceptedAt, session) => surveys.updateOne({ _id: survey._id, definitionRevision: survey.definitionRevision, firstSubmittedAt: null }, { $set: { contentLocked: true, firstSubmittedAt: acceptedAt, updatedAt: acceptedAt }, $inc: { revision: 1 } }, { session }),
     removeOwn: (survey, session) => surveys.deleteOne({ _id: survey._id, ownerId: survey.ownerId, revision: survey.revision }, { session }),
-    updateOwn: (filter, changes) => surveys.findOneAndUpdate(filter, { $set: { ...changes, ...(Object.hasOwn(changes, 'questions') ? { questions: storageQuestions(changes.questions) } : {}) }, $inc: { revision: 1 } }, { returnDocument: 'after', includeResultMetadata: false })
+    updateOwn: (filter, changes, session) => surveys.findOneAndUpdate(filter, { $set: { ...changes, ...(Object.hasOwn(changes, 'questions') ? { questions: storageQuestions(changes.questions) } : {}) }, $inc: { revision: 1 } }, { returnDocument: 'after', includeResultMetadata: false, session })
   };
 }

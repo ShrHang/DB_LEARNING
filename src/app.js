@@ -11,6 +11,9 @@ import { createSurveyService } from './services/survey-service.js';
 import { createFillService } from './services/fill-service.js';
 import { createSubmissionService } from './services/submission-service.js';
 import { createStatisticsService } from './services/statistics-service.js';
+import { createQuestionService } from './services/question-service.js';
+import { createBankService } from './services/bank-service.js';
+import { createQuestionStatisticsService } from './services/question-statistics-service.js';
 import { createDeletionService } from './services/deletion-service.js';
 
 export const SESSION_DURATION = 24 * 60 * 60 * 1000;
@@ -18,7 +21,7 @@ const cookieName = 'questionnaire.sid';
 const token = () => randomBytes(32).toString('hex');
 const sessionAction = (req, action) => new Promise((resolve, reject) => req.session[action](error => error ? reject(error) : resolve()));
 
-export function createApp({ db, client, config, clock = { now: () => Date.now() }, logger = console, submissionHooks = {}, deletionHooks = {} }) {
+export function createApp({ db, client, config, clock = { now: () => Date.now() }, logger = console, submissionHooks = {}, deletionHooks = {}, questionHooks = {} }) {
   if (!db || !client || !config?.sessionSecret) throw new Error('createApp 缺少数据库或会话配置');
   const app = express();
   app.disable('x-powered-by');
@@ -115,7 +118,38 @@ export function createApp({ db, client, config, clock = { now: () => Date.now() 
     res.status(204).end();
   });
   app.get('/api/surveys', requireAuth, async (req, res) => res.json({ data: await listSurveys(db, req.user.id, req.query) }));
-  const surveys = createSurveyService({ db, client, clock });
+  const library = createQuestionService({ db, client, clock, hooks: questionHooks });
+  const banks = createBankService({ db, client, clock, library });
+  const questionStats = createQuestionStatisticsService({ db, library });
+  const get = (path, handler) => app.get(`/api${path}`, requireAuth, async (req, res) => res.json({ data: await handler(req) }));
+  const write = (method, path, handler, status = 200) => app[method](`/api${path}`, requireAuth, requireCsrf, async (req, res) => {
+    if (Object.keys(req.query).length) throw new AppError(400, 'INVALID_QUERY', '不支持查询参数');
+    const data = await handler(req);
+    if (status === 204) res.status(204).end(); else res.status(status).json({ data });
+  });
+  get('/questions', r => library.list(r.user.id, r.query));
+  write('post', '/questions', r => library.create(r.user.id, r.body), 201);
+  get('/questions/:id', r => library.get(r.user.id, r.params.id, r.query));
+  get('/questions/:id/versions', r => library.listVersions(r.user.id, r.params.id, r.query));
+  get('/questions/:id/versions/:versionId', r => library.getVersion(r.user.id, r.params.id, r.params.versionId, r.query));
+  write('post', '/questions/:id/versions', r => library.addVersion(r.user.id, r.params.id, r.body));
+  write('post', '/questions/:id/fork', r => library.fork(r.user.id, r.params.id, r.body), 201);
+  get('/questions/:id/shares', r => library.listShares(r.user.id, r.params.id, r.query));
+  write('post', '/questions/:id/shares', r => library.share(r.user.id, r.params.id, r.body));
+  write('delete', '/questions/:id/shares/:shareId', r => library.revoke(r.user.id, r.params.id, r.params.shareId, r.body));
+  for (const action of ['archive', 'restore']) write('post', `/questions/:id/${action}`, r => library.archive(r.user.id, r.params.id, r.body, action === 'archive'));
+  get('/questions/:id/usage', r => library.usage(r.user.id, r.params.id, r.query));
+  for (const action of ['statistics', 'answers', 'frequencies']) get(`/questions/:id/versions/:versionId/${action}`, r => questionStats[action](r.user.id, r.params.id, r.params.versionId, r.query));
+  get('/question-banks', r => banks.list(r.user.id, r.query));
+  write('post', '/question-banks', r => banks.create(r.user.id, r.body), 201);
+  write('patch', '/question-banks/:id', r => banks.change(r.user.id, r.params.id, r.body));
+  write('delete', '/question-banks/:id', r => banks.change(r.user.id, r.params.id, r.body, true), 204);
+  get('/question-banks/:id/items', r => banks.listItems(r.user.id, r.params.id, r.query));
+  write('post', '/question-banks/:id/items', r => banks.add(r.user.id, r.params.id, r.body));
+  write('delete', '/question-banks/:id/items/:questionId', r => banks.remove(r.user.id, r.params.id, r.params.questionId, r.body));
+  const surveys = createSurveyService({ db, client, clock, questionHooks });
+  write('post', '/surveys/:id/clone', r => surveys.clone(r.user.id, r.params.id, r.body), 201);
+  write('post', '/surveys/:id/questions/:questionId/save', r => surveys.exportQuestion(r.user.id, r.params.id, r.params.questionId, r.body), 201);
   app.post('/api/surveys', requireAuth, requireCsrf, async (req, res) => res.status(201).json({ data: await surveys.create(req.user.id, req.body) }));
   app.get('/api/surveys/:id', requireAuth, async (req, res) => res.json({ data: await surveys.get(req.user.id, req.params.id) }));
   app.patch('/api/surveys/:id', requireAuth, requireCsrf, async (req, res) => res.json({ data: await surveys.patch(req.user.id, req.params.id, req.body) }));
